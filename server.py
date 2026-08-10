@@ -359,6 +359,13 @@ def extract_json(text: str, profile: dict[str, Any]) -> dict[str, Any]:
         parsed["swimGuide"] = defaults["swimGuide"]
     if not isinstance(parsed["shoppingList"], dict) or not parsed["shoppingList"]:
         parsed["shoppingList"] = defaults["shoppingList"]
+    movement_text = lambda day: f"{day.get('movement', {}).get('type', '')} {day.get('movement', {}).get('title', '')}".lower()
+    if profile["walk"] and not any("gå" in movement_text(day) for day in parsed["days"]):
+        parsed["days"][0]["movement"] = defaults["days"][0]["movement"]
+    if profile["strength"] and not any("styrk" in movement_text(day) for day in parsed["days"]):
+        parsed["days"][1]["movement"] = defaults["days"][1]["movement"]
+    if profile["swim"] and not any("svøm" in movement_text(day) for day in parsed["days"]):
+        parsed["days"][2]["movement"] = defaults["days"][2]["movement"]
     parsed["title"] = str(parsed.get("title", "Din Fri Form-plan"))[:120]
     return parsed
 
