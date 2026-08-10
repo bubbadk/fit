@@ -10,5 +10,6 @@ build/
 .coverage
 *.log
 *.db
+*.db-*
 *.sqlite*
 .DS_Store

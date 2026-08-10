@@ -3,12 +3,19 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": { "dev": "vite", "build": "vite build" },
-  "dependencies": { "react": "19.2.6", "react-dom": "19.2.6" },
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test:server": "python -m unittest discover -s tests -p 'test_*.py'"
+  },
+  "dependencies": {
+    "react": "19.2.6",
+    "react-dom": "19.2.6"
+  },
   "devDependencies": {
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
     "typescript": "5.9.3",
-    "vite": "8.0.13"
+    "vite": "^8.2.1"
   }
 }

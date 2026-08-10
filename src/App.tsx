@@ -1,233 +1,267 @@
-"use client";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 
-import { useEffect, useMemo, useState } from "react";
-
-type PlanAnswers = {
+type User = { name: string; email: string };
+type Meal = { title: string; ingredients?: string[]; portion?: string };
+type PlanDay = {
+  day: number;
+  name: string;
+  focus: string;
+  meals: { breakfast: Meal; lunch: Meal; dinner: Meal; snack: Meal };
+  movement: { type: string; title: string; minutes: number; intensity: string; instructions: string[]; alternative: string };
+  habit: string;
+  encouragement: string;
+};
+type Plan = {
+  title: string;
+  intro: string;
+  weeklyFocus: string;
+  safetyNote: string;
+  waterTip: string;
+  sleepTip: string;
+  days: PlanDay[];
+  strengthGuide: { exercise: string; sets: string; reps: string; how: string; easier: string }[];
+  swimGuide: { part: string; minutes: number; how: string }[];
+  shoppingList: Record<string, string[]>;
+  checkInQuestions: string[];
+  medicalReminder: string;
+};
+type Profile = {
+  age: number;
+  height: number;
   weight: number;
-  goal: number;
-  movement: "start" | "some" | "active";
-  food: "all" | "green" | "flex";
-  consideration: "none" | "knees" | "back";
+  targetWeight: number;
+  activity: "starter" | "light" | "regular";
+  diet: "flex" | "vegetarian" | "pescetarian";
+  trainingPlace: "home" | "gym" | "mix";
+  pace: "gentle" | "steady";
+  minutes: number;
+  walk: boolean;
+  swim: boolean;
+  strength: boolean;
+  knees: boolean;
+  back: boolean;
+  diabetes: boolean;
+  heart: boolean;
+  pregnant: boolean;
+  eatingDisorder: boolean;
+  allergies: string;
+  dislikes: string;
+  cookingMinutes: number;
+  consent: boolean;
 };
+type Checkin = { day: string; item_id: string; completed: number; weight?: number; mood?: number };
+type Tab = "today" | "week" | "food" | "training" | "progress";
 
-type Tab = "today" | "week" | "food" | "progress";
-
-const defaultAnswers: PlanAnswers = {
+const initialProfile: Profile = {
+  age: 45,
+  height: 178,
   weight: 112,
-  goal: 10,
-  movement: "start",
-  food: "flex",
-  consideration: "none",
+  targetWeight: 100,
+  activity: "starter",
+  diet: "flex",
+  trainingPlace: "home",
+  pace: "gentle",
+  minutes: 25,
+  walk: true,
+  swim: true,
+  strength: true,
+  knees: false,
+  back: false,
+  diabetes: false,
+  heart: false,
+  pregnant: false,
+  eatingDisorder: false,
+  allergies: "",
+  dislikes: "",
+  cookingMinutes: 30,
+  consent: false,
 };
 
-const weekPlan = [
-  { day: "Man", title: "Rolig gåtur", meta: "25 min · snakketempo", kind: "walk", icon: "↗" },
-  { day: "Tir", title: "Styrke hjemme", meta: "20 min · hele kroppen", kind: "strength", icon: "+" },
-  { day: "Ons", title: "Svømning", meta: "30 min · rolige baner", kind: "swim", icon: "≈" },
-  { day: "Tor", title: "Restitutionsgåtur", meta: "20 min · helt roligt", kind: "walk", icon: "↗" },
-  { day: "Fre", title: "Styrke hjemme", meta: "25 min · hele kroppen", kind: "strength", icon: "+" },
-  { day: "Lør", title: "Længere gåtur", meta: "40 min · valgfri rute", kind: "walk", icon: "↗" },
-  { day: "Søn", title: "Fri + bevægelighed", meta: "10 min · let og rart", kind: "rest", icon: "○" },
-];
-
-const meals = [
-  { icon: "🥣", time: "Morgen", title: "Havregrød med skyr og bær", detail: "Havregryn · skyr · frosne bær · 1 spsk nødder", note: "Mætter godt og giver fuldkorn" },
-  { icon: "🥪", time: "Frokost", title: "Rugbrød med æg og grønt", detail: "2 skiver rugbrød · 2 æg · tomat · agurk · gulerødder", note: "Nem at pakke og tage med" },
-  { icon: "🍲", time: "Aften", title: "Kylling, kartofler og stor salat", detail: "1 håndflade protein · 1 knytnæve kartofler · ½ tallerken grønt", note: "Brug tallerkenmodellen—ingen vejning" },
-  { icon: "🍎", time: "Hvis sulten", title: "Frugt + lille håndfuld nødder", detail: "Eller skyr, knækbrød eller grøntsagsstave", note: "Et forslag, ikke en pligt" },
-];
-
-function save(key: string, value: unknown) {
-  if (typeof window !== "undefined") localStorage.setItem(key, JSON.stringify(value));
+async function api(path: string, options: RequestInit = {}, csrf = "") {
+  const response = await fetch(path, {
+    ...options,
+    headers: { "Content-Type": "application/json", ...(csrf ? { "X-CSRF-Token": csrf } : {}), ...options.headers },
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || "Noget gik galt. Prøv igen.");
+  return data;
 }
 
-export default function Home() {
-  const [screen, setScreen] = useState<"intro" | "quiz" | "plan">("intro");
-  const [step, setStep] = useState(0);
-  const [answers, setAnswers] = useState<PlanAnswers>(defaultAnswers);
-  const [tab, setTab] = useState<Tab>("today");
-  const [done, setDone] = useState<Record<string, boolean>>({});
+function todayKey() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Copenhagen" }).format(new Date());
+}
 
-  useEffect(() => {
-    const storedAnswers = localStorage.getItem("friform-answers");
-    const storedDone = localStorage.getItem("friform-done");
-    if (storedAnswers) {
-      setAnswers(JSON.parse(storedAnswers));
-      setScreen("plan");
+function Brand() {
+  return <span className="brand"><span className="brand-mark">F</span><span><b>FRI FORM</b><small>Et lettere liv, ét skridt ad gangen</small></span></span>;
+}
+
+export default function App() {
+  const [loading, setLoading] = useState(true);
+  const [user, setUser] = useState<User | null>(null);
+  const [csrf, setCsrf] = useState("");
+  const [profile, setProfile] = useState<Profile>(initialProfile);
+  const [plan, setPlan] = useState<Plan | null>(null);
+  const [provider, setProvider] = useState("");
+  const [checkins, setCheckins] = useState<Checkin[]>([]);
+  const [authOpen, setAuthOpen] = useState(false);
+
+  const refresh = async () => {
+    try {
+      const data = await api("/api/me");
+      if (data.authenticated) {
+        setUser(data.user);
+        setCsrf(data.csrf);
+        if (data.profile) setProfile(data.profile);
+        if (data.latestPlan) {
+          setPlan(data.latestPlan.plan);
+          setProvider(data.latestPlan.provider);
+        }
+        setCheckins(data.checkins || []);
+      }
+    } finally {
+      setLoading(false);
     }
-    if (storedDone) setDone(JSON.parse(storedDone));
-  }, []);
-
-  const completed = Object.values(done).filter(Boolean).length;
-  const considerationText = answers.consideration === "knees" ? "knævenligt" : answers.consideration === "back" ? "rygvenligt" : "skånsomt";
-
-  const startPlan = () => {
-    save("friform-answers", answers);
-    setScreen("plan");
-    setTab("today");
-    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
-  const toggleDone = (id: string) => {
-    const next = { ...done, [id]: !done[id] };
-    setDone(next);
-    save("friform-done", next);
-  };
+  useEffect(() => { refresh(); }, []);
 
-  const reset = () => {
-    localStorage.removeItem("friform-answers");
-    localStorage.removeItem("friform-done");
-    setAnswers(defaultAnswers);
-    setDone({});
-    setStep(0);
-    setScreen("intro");
-  };
-
-  return (
-    <main className="app-shell">
-      <Header screen={screen} onReset={reset} />
-      {screen === "intro" && <Intro onStart={() => setScreen("quiz")} />}
-      {screen === "quiz" && (
-        <Quiz step={step} answers={answers} setAnswers={setAnswers} onBack={() => step === 0 ? setScreen("intro") : setStep(step - 1)} onNext={() => step === 4 ? startPlan() : setStep(step + 1)} />
-      )}
-      {screen === "plan" && (
-        <Dashboard answers={answers} tab={tab} setTab={setTab} done={done} toggleDone={toggleDone} completed={completed} considerationText={considerationText} />
-      )}
-      <Footer />
-    </main>
-  );
+  if (loading) return <div className="loading-screen"><Brand /><span className="loader" /><p>Gør din plan klar…</p></div>;
+  if (!user) return <Landing onStart={() => setAuthOpen(true)} authOpen={authOpen} setAuthOpen={setAuthOpen} onAuth={refresh} />;
+  if (!plan) return <Onboarding user={user} csrf={csrf} profile={profile} setProfile={setProfile} onPlan={(value, source) => { setPlan(value); setProvider(source); }} onLogout={() => logout(csrf, setUser)} />;
+  return <Dashboard user={user} csrf={csrf} plan={plan} provider={provider} profile={profile} checkins={checkins} setCheckins={setCheckins} onNewPlan={() => setPlan(null)} onLogout={() => logout(csrf, setUser)} />;
 }
 
-function Header({ screen, onReset }: { screen: string; onReset: () => void }) {
-  return (
-    <header className="topbar">
-      <button className="brand" onClick={() => window.location.reload()} aria-label="Fri Form forside">
-        <span className="brand-mark"><i /></span><span>FRI FORM</span>
-      </button>
-      <div className="top-actions">
-        <span className="free-badge"><i /> Altid gratis</span>
-        {screen === "plan" && <button className="text-button" onClick={onReset}>Lav planen om</button>}
-      </div>
-    </header>
-  );
+async function logout(csrf: string, setUser: (user: User | null) => void) {
+  await api("/api/auth/logout", { method: "POST", body: "{}" }, csrf).catch(() => null);
+  setUser(null);
 }
 
-function Intro({ onStart }: { onStart: () => void }) {
-  return (
-    <>
-      <section className="hero">
-        <div className="hero-copy">
-          <div className="eyebrow"><span>100% gratis</span><span>Ingen konto</span><span>Ingen skam</span></div>
-          <h1>En plan du faktisk<br /><em>kan leve med.</em></h1>
-          <p className="lead">Små skridt til et lettere liv. Få en enkel ugeplan med almindelig mad, gåture, hjemmetræning og svømning—tilpasset dit udgangspunkt.</p>
-          <button className="primary big" onClick={onStart}>Lav min gratis plan <span>→</span></button>
-          <p className="microcopy">Tager ca. 2 minutter · Dine svar bliver på din enhed</p>
-        </div>
-        <div className="plan-preview" aria-label="Eksempel på en dagsplan">
-          <div className="preview-top"><span>I DAG</span><span>2 af 4 klaret</span></div>
-          <h2>Godmorgen 👋</h2>
-          <p>Vi holder det enkelt i dag.</p>
-          <div className="preview-task done-task"><span className="check">✓</span><div><b>Drik et glas vand</b><small>En blid start tæller også</small></div><time>08:00</time></div>
-          <div className="preview-task"><span className="task-icon walk">↗</span><div><b>25 min. gåtur</b><small>Tempo: du kan stadig tale</small></div><time>17:00</time></div>
-          <div className="preview-task"><span className="task-icon food">½</span><div><b>Halv tallerken grønt</b><small>Til dit aftensmåltid</small></div><time>Aften</time></div>
-          <div className="pep"><span>✦</span><p><b>Det behøver ikke være perfekt.</b><br />Det skal bare være muligt igen i morgen.</p></div>
-        </div>
-      </section>
-
-      <section className="trust-strip" aria-label="Fordele">
-        <div><strong>0 kr.</strong><span>Nu og altid</span></div><div><strong>5 min.</strong><span>At komme i gang</span></div><div><strong>7 dage</strong><span>Én uge ad gangen</span></div><div><strong>Lokalt</strong><span>Data på din enhed</span></div>
-      </section>
-
-      <section className="how">
-        <p className="section-kicker">EN PLAN, IKKE EN KUR</p>
-        <h2>Hverdagen er svær nok.<br />Din plan skal være enkel.</h2>
-        <div className="feature-grid">
-          <article><span className="num">01</span><div className="feature-art plate"><i /><b /></div><h3>Spis almindelig mad</h3><p>Ingen forbudslister. Vi bruger portionsgreb og danske kostråd, så du kan handle i et helt almindeligt supermarked.</p></article>
-          <article><span className="num">02</span><div className="feature-art route"><i /><b /><em /></div><h3>Bevæg dig på din måde</h3><p>Gåture, korte styrkepas og svømning. Planen starter roligt og bygger på, når kroppen er med.</p></article>
-          <article><span className="num">03</span><div className="feature-art steps"><i /><b /><em /></div><h3>Se de små sejre</h3><p>Sæt flueben ved det, du gør. En mindre god dag nulstiller ikke din fremgang—du fortsætter bare.</p></article>
-        </div>
-      </section>
-
-      <section className="start-banner">
-        <div><span>KLAR, NÅR DU ER</span><h2>Dit første mål er ikke 20 kilo.<br />Det er den første uge.</h2></div>
-        <button className="primary light" onClick={onStart}>Start helt gratis <span>→</span></button>
-      </section>
-    </>
-  );
-}
-
-function Quiz({ step, answers, setAnswers, onBack, onNext }: { step: number; answers: PlanAnswers; setAnswers: (v: PlanAnswers) => void; onBack: () => void; onNext: () => void }) {
-  const titles = ["Hvor starter vi?", "Hvad vil du først opnå?", "Hvordan bevæger du dig nu?", "Hvordan vil du helst spise?", "Skal planen tage særlige hensyn?"];
-  const subs = ["Et cirka-tal er helt fint. Det bruges kun til at give din plan et realistisk udgangspunkt.", "Små, tydelige mål er lettere at holde fast i. Du kan altid ændre det senere.", "Vælg det, der ligner en normal uge—ikke din allerbedste uge.", "Der er ingen rigtig kost. Vælg den, der passer bedst til din hverdag.", "Hvis du har smerter eller sygdom, bør en sundhedsprofessionel hjælpe med at tilpasse motionen."];
-  return (
-    <section className="quiz-wrap">
-      <div className="progress-head"><button onClick={onBack} aria-label="Gå tilbage">←</button><div><i style={{ width: `${(step + 1) * 20}%` }} /></div><span>{step + 1} / 5</span></div>
-      <div className="quiz-card">
-        <p className="section-kicker">DIN GRATIS PLAN</p><h1>{titles[step]}</h1><p className="quiz-sub">{subs[step]}</p>
-        {step === 0 && <div className="weight-input"><label htmlFor="weight">Din vægt lige nu</label><div><input id="weight" inputMode="decimal" type="number" min="40" max="300" value={answers.weight} onChange={(e) => setAnswers({ ...answers, weight: Number(e.target.value) })} /><span>kg</span></div><small>Kun gemt lokalt på denne enhed</small></div>}
-        {step === 1 && <Options value={String(answers.goal)} onChange={(v) => setAnswers({ ...answers, goal: Number(v) })} options={[{v:"5",t:"De første 5 kg",d:"Et nært og overskueligt mål"},{v:"10",t:"De første 10 kg",d:"Rolig fremgang over flere måneder"},{v:"15",t:"15 kg eller mere",d:"Vi deler rejsen op i mindre etaper"}]} />}
-        {step === 2 && <Options value={answers.movement} onChange={(v) => setAnswers({ ...answers, movement: v as PlanAnswers["movement"] })} options={[{v:"start",t:"Jeg starter næsten fra nul",d:"Korte ture og ekstra blid styrke"},{v:"some",t:"Jeg bevæger mig lidt",d:"Nogle gåture eller aktivitet hver uge"},{v:"active",t:"Jeg er allerede ret aktiv",d:"Jeg vil have mere struktur"}]} />}
-        {step === 3 && <Options value={answers.food} onChange={(v) => setAnswers({ ...answers, food: v as PlanAnswers["food"] })} options={[{v:"flex",t:"Fleksibelt og almindeligt",d:"Både kød, fisk og grønne retter"},{v:"green",t:"Mest vegetarisk",d:"Bælgfrugter, æg og mejeriprodukter"},{v:"all",t:"Jeg spiser det meste",d:"Giv mig den enkleste løsning"}]} />}
-        {step === 4 && <Options value={answers.consideration} onChange={(v) => setAnswers({ ...answers, consideration: v as PlanAnswers["consideration"] })} options={[{v:"none",t:"Ingen særlige hensyn",d:"Rolig, almindelig opstart"},{v:"knees",t:"Jeg passer på mine knæ",d:"Mere svømning og færre dybe bøj"},{v:"back",t:"Jeg passer på min ryg",d:"Stabile, kontrollerede bevægelser"}]} />}
-        <button className="primary full" onClick={onNext} disabled={step === 0 && (!answers.weight || answers.weight < 40)}> {step === 4 ? "Vis min ugeplan" : "Fortsæt"} <span>→</span></button>
-        {step === 4 && <p className="safety-note">Planen er generel vejledning til raske voksne—ikke medicinsk behandling.</p>}
-      </div>
+function Landing({ onStart, authOpen, setAuthOpen, onAuth }: { onStart: () => void; authOpen: boolean; setAuthOpen: (v: boolean) => void; onAuth: () => Promise<void> }) {
+  return <main>
+    <header className="public-header"><Brand /><nav><a href="#saadan">Sådan virker det</a><a href="#indhold">Din plan</a><button className="link-button" onClick={() => setAuthOpen(true)}>Log ind</button><button className="primary small" onClick={onStart}>Start gratis</button></nav></header>
+    <section className="hero">
+      <div className="hero-copy"><p className="eyebrow">100 % GRATIS · INGEN BETALINGSMUR</p><h1>En personlig plan,<br /><em>der passer til dit liv.</em></h1><p className="lead">Få en grundig ugeplan med almindelig mad, gåture, svømning og styrketræning. Din plan husker din fremgang og møder dig igen i morgen.</p><div className="hero-actions"><button className="primary large" onClick={onStart}>Lav min gratis plan <span>→</span></button><span>Ca. 5 minutter<br />Planen sendes også på mail</span></div><div className="trust-row"><span>✓ Altid gratis</span><span>✓ Dansk AI-plan</span><span>✓ Gemmes sikkert</span></div></div>
+      <div className="phone-card"><div className="phone-top"><span>I DAG</span><span className="streak">3 dage i gang</span></div><h2>Godmorgen 👋</h2><p>Kun tre overskuelige ting i dag.</p><PreviewTask done icon="✓" title="Morgenmad der mætter" meta="Havregrød, skyr og bær" /><PreviewTask icon="↗" title="25 minutters gåtur" meta="Roligt snakketempo" /><PreviewTask icon="½" title="Tallerkenmodellen" meta="Grønt på halvdelen" /><div className="coach-note"><b>Din plan må gerne bøje.</b><span>En mindre dag er stadig en dag i den rigtige retning.</span></div></div>
     </section>
-  );
+    <section className="metric-strip"><div><b>7</b><span>detaljerede dage</span></div><div><b>4</b><span>daglige måltidsforslag</span></div><div><b>3</b><span>måder at bevæge sig</span></div><div><b>0 kr.</b><span>nu og fremover</span></div></section>
+    <section id="saadan" className="steps-section"><p className="eyebrow">EN PLAN, IKKE ENDNU EN KUR</p><h2>Vi gør det grundigt.<br />Men aldrig uoverskueligt.</h2><div className="three-grid"><Feature n="01" title="Fortæl om din hverdag" text="Vælg madpræferencer, tid, udgangspunkt og de motionsformer, du faktisk kan se dig selv lave." /><Feature n="02" title="AI bygger din uge" text="En klog model samler kost, gåture, svømning og styrke i én sammenhængende dansk plan." /><Feature n="03" title="Følg ét døgn ad gangen" text="Sæt flueben, se din uge og få planen på mail. Du kan altid justere og begynde igen." /></div></section>
+    <section id="indhold" className="plan-showcase"><div><p className="eyebrow">BYGGET TIL VIRKELIGHEDEN</p><h2>Alle dele af din uge<br />samlet ét sted.</h2><p>Hver dag indeholder konkrete måltider, portionsgreb, bevægelse med alternativer og en lille vane. Ugen samles med indkøbsliste, styrkeguide og svømmeprogram.</p><button className="primary" onClick={onStart}>Opret gratis konto</button></div><div className="showcase-list"><span><i>🥣</i><b>Mad</b><small>Ingredienser, portioner og alternativer</small></span><span><i>🚶</i><b>Gåture</b><small>Tid, tempo og kortere mulighed</small></span><span><i>🏊</i><b>Svømning</b><small>Opvarmning, intervaller og rolig afslutning</small></span><span><i>💪</i><b>Styrke</b><small>Øvelser, gentagelser og lettere varianter</small></span></div></section>
+    <section className="closing"><p>Det første mål er ikke hele rejsen.</p><h2>Det er at gøre i morgen<br />lidt lettere end i dag.</h2><button className="primary light large" onClick={onStart}>Start min gratis plan →</button></section>
+    <PublicFooter />
+    {authOpen && <AuthModal onClose={() => setAuthOpen(false)} onAuth={onAuth} />}
+  </main>;
 }
 
-function Options({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: { v: string; t: string; d: string }[] }) {
-  return <div className="option-list">{options.map(o => <button key={o.v} className={value === o.v ? "selected" : ""} onClick={() => onChange(o.v)}><span className="radio"><i /></span><span><b>{o.t}</b><small>{o.d}</small></span></button>)}</div>;
+function PreviewTask({ done, icon, title, meta }: { done?: boolean; icon: string; title: string; meta: string }) {
+  return <div className={`preview-task ${done ? "done" : ""}`}><i>{icon}</i><span><b>{title}</b><small>{meta}</small></span><button aria-label="Markér opgave">{done ? "✓" : ""}</button></div>;
 }
 
-function Dashboard({ answers, tab, setTab, done, toggleDone, completed, considerationText }: { answers: PlanAnswers; tab: Tab; setTab: (t: Tab) => void; done: Record<string, boolean>; toggleDone: (id: string) => void; completed: number; considerationText: string }) {
-  const tabs = [{id:"today",label:"I dag",icon:"☀"},{id:"week",label:"Ugeplan",icon:"▦"},{id:"food",label:"Mad",icon:"◒"},{id:"progress",label:"Fremgang",icon:"↗"}] as const;
-  return (
-    <div className="dashboard">
-      <aside className="side-nav">
-        <p>MIN PLAN</p>{tabs.map(t => <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}><span>{t.icon}</span>{t.label}</button>)}
-        <div className="side-note"><b>Husk</b><p>En plan må gerne bøje. Den skal bare ikke knække.</p></div>
-      </aside>
-      <section className="dash-main">
-        {tab === "today" && <Today done={done} toggleDone={toggleDone} completed={completed} answers={answers} considerationText={considerationText} setTab={setTab} />}
-        {tab === "week" && <Week done={done} toggleDone={toggleDone} considerationText={considerationText} />}
-        {tab === "food" && <Food />}
-        {tab === "progress" && <Progress answers={answers} completed={completed} />}
-      </section>
-      <nav className="bottom-nav">{tabs.map(t => <button key={t.id} className={tab === t.id ? "active" : ""} onClick={() => setTab(t.id)}><span>{t.icon}</span>{t.label}</button>)}</nav>
-    </div>
-  );
+function Feature({ n, title, text }: { n: string; title: string; text: string }) {
+  return <article className="feature"><span>{n}</span><div className={`feature-art art-${n}`}><i /><b /><em /></div><h3>{title}</h3><p>{text}</p></article>;
 }
 
-function Today({ done, toggleDone, completed, answers, considerationText, setTab }: { done: Record<string, boolean>; toggleDone: (id: string) => void; completed: number; answers: PlanAnswers; considerationText: string; setTab: (t: Tab) => void }) {
-  const tasks = [
-    { id: "water", icon: "○", title: "Start med et glas vand", detail: "Når det passer ind i din morgen", color: "blue" },
-    { id: "walk", icon: "↗", title: `${answers.movement === "start" ? 20 : 30} min. gåtur`, detail: `Roligt, ${considerationText} tempo`, color: "green" },
-    { id: "plate", icon: "½", title: "Halv tallerken grønt", detail: "Til dit største måltid", color: "orange" },
-    { id: "pause", icon: "✦", title: "2 minutters pause før ekstra", detail: "Mærk efter: sulten eller bare lyst?", color: "purple" },
-  ];
-  return <>
-    <div className="dash-heading"><div><p className="section-kicker">DIN FØRSTE UGE</p><h1>I dag gør vi det<br />helt enkelt.</h1><p>Vælg det mulige frem for det perfekte.</p></div><div className="day-ring" style={{"--progress": `${Math.min(completed,4) * 25}%`} as React.CSSProperties}><div><b>{Math.min(completed,4)}</b><span>af 4</span></div></div></div>
-    <div className="today-grid"><div className="task-list"><div className="list-head"><h2>Dagens små skridt</h2><span>{Math.min(completed,4)}/4 klaret</span></div>{tasks.map(task => <button key={task.id} className={`dash-task ${done[task.id] ? "done" : ""}`} onClick={() => toggleDone(task.id)}><span className={`task-bubble ${task.color}`}>{done[task.id] ? "✓" : task.icon}</span><span><b>{task.title}</b><small>{task.detail}</small></span><i className="task-check">{done[task.id] ? "✓" : ""}</i></button>)}</div>
-      <aside className="today-side"><div className="meal-card"><div className="meal-visual"><span>½</span><i>¼</i><b>¼</b></div><p className="section-kicker">AFTENSMAD</p><h3>Kylling, kartofler<br />og sprød salat</h3><p>Ingen kalorietælling. Brug hånden og tallerkenen som guide.</p><button onClick={() => setTab("food")}>Se dagens mad <span>→</span></button></div><div className="quote-card"><span>“</span><p>Du er ikke bagud.<br />Du er i gang.</p></div></aside>
-    </div>
-    <div className="safety-bar"><span>i</span><p><b>Start roligt.</b> Stop ved smerter, svimmelhed eller ubehag. Har du diabetes, hjerteproblemer, markante ledsmerter eller medicin der påvirker vægten, så få lægen med på planen.</p></div>
-  </>;
+function AuthModal({ onClose, onAuth }: { onClose: () => void; onAuth: () => Promise<void> }) {
+  const [mode, setMode] = useState<"register" | "login">("register");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault(); setError(""); setBusy(true);
+    const form = new FormData(event.currentTarget);
+    try {
+      await api(`/api/auth/${mode}`, { method: "POST", body: JSON.stringify({ name: form.get("name"), email: form.get("email"), password: form.get("password") }) });
+      await onAuth(); onClose();
+    } catch (err) { setError(err instanceof Error ? err.message : "Noget gik galt."); } finally { setBusy(false); }
+  };
+  return <div className="modal-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}><section className="auth-modal" role="dialog" aria-modal="true" aria-labelledby="auth-title"><button className="modal-close" onClick={onClose} aria-label="Luk">×</button><Brand /><p className="eyebrow">{mode === "register" ? "DIN GRATIS KONTO" : "VELKOMMEN TILBAGE"}</p><h2 id="auth-title">{mode === "register" ? "Gem din plan og fortsæt i morgen." : "Log ind på din plan."}</h2><p>{mode === "register" ? "Ingen prøveperiode. Intet betalingskort. Bare din personlige plan." : "Din plan, dine flueben og din fremgang venter på dig."}</p><form onSubmit={submit}>{mode === "register" && <label>Fornavn<input name="name" autoComplete="name" required minLength={2} placeholder="Dit navn" /></label>}<label>E-mail<input name="email" type="email" autoComplete="email" required placeholder="dig@eksempel.dk" /></label><label>Adgangskode<input name="password" type="password" autoComplete={mode === "register" ? "new-password" : "current-password"} required minLength={10} placeholder="Mindst 10 tegn" /></label>{error && <p className="form-error" role="alert">{error}</p>}<button className="primary full" disabled={busy}>{busy ? "Et øjeblik…" : mode === "register" ? "Opret gratis konto" : "Log ind"}</button></form><button className="switch-auth" onClick={() => { setMode(mode === "register" ? "login" : "register"); setError(""); }}>{mode === "register" ? "Har du allerede en konto? Log ind" : "Ny her? Opret gratis konto"}</button><small>Ved at oprette en konto accepterer du, at dine oplysninger gemmes sikkert for at levere tjenesten. Du kan altid slette kontoen.</small></section></div>;
 }
 
-function Week({ done, toggleDone, considerationText }: { done: Record<string, boolean>; toggleDone: (id: string) => void; considerationText: string }) {
-  return <><div className="dash-heading compact"><div><p className="section-kicker">UGE 1 · KOM GODT I GANG</p><h1>Din bevægelsesplan</h1><p>Ca. 170 minutter fordelt over ugen. Alt kan byttes rundt.</p></div></div><div className="week-list">{weekPlan.map((item, i) => { const id = `week-${i}`; return <button key={item.day} className={done[id] ? "done" : ""} onClick={() => toggleDone(id)}><span className="day-label">{item.day}</span><span className={`activity-icon ${item.kind}`}>{done[id] ? "✓" : item.icon}</span><span className="activity-copy"><b>{item.title}</b><small>{i === 0 ? item.meta.replace("snakketempo", considerationText + " tempo") : item.meta}</small></span><span className="week-check">{done[id] ? "Klaret" : "Markér"}</span></button>})}</div><div className="strength-box"><div><p className="section-kicker">20 MINUTTER · 2 RUNDER</p><h2>Dit hjemmepas</h2></div><div className="exercise-grid"><span><b>1</b>Rejs-sæt-dig fra stol<small>8 rolige gentagelser</small></span><span><b>2</b>Væg-armbøjninger<small>8–10 gentagelser</small></span><span><b>3</b>Stående træk med håndklæde<small>10 gentagelser</small></span><span><b>4</b>March på stedet<small>45 sekunder</small></span></div></div></>;
+function Onboarding({ user, csrf, profile, setProfile, onPlan, onLogout }: { user: User; csrf: string; profile: Profile; setProfile: (p: Profile) => void; onPlan: (p: Plan, provider: string) => void; onLogout: () => void }) {
+  const [step, setStep] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const update = <K extends keyof Profile>(key: K, value: Profile[K]) => setProfile({ ...profile, [key]: value });
+  const generate = async () => {
+    setError(""); setBusy(true);
+    try {
+      const data = await api("/api/plan/generate", { method: "POST", body: JSON.stringify({ profile }) }, csrf);
+      onPlan(data.plan, data.provider);
+      if (data.email_error) sessionStorage.setItem("friform-email-warning", data.email_error);
+    } catch (err) { setError(err instanceof Error ? err.message : "Planen kunne ikke laves."); setBusy(false); }
+  };
+  const titles = ["Dit udgangspunkt", "Mad der passer til dig", "Bevægelse på din måde", "Helbred og samtykke"];
+  return <main className="onboarding"><header className="app-header"><Brand /><div><span>Hej, {user.name}</span><button className="link-button" onClick={onLogout}>Log ud</button></div></header><div className="onboard-shell"><aside><p className="eyebrow">DIN PROFIL</p><h1>En god plan starter med at forstå din hverdag.</h1><p>Der er ingen rigtige svar. Vælg det, der ligner en normal uge.</p><ol>{titles.map((title, index) => <li className={index === step ? "active" : index < step ? "done" : ""} key={title}><i>{index < step ? "✓" : index + 1}</i><span>{title}</span></li>)}</ol></aside><section className="onboard-card"><div className="onboard-progress"><span>Trin {step + 1} af 4</span><i><b style={{ width: `${(step + 1) * 25}%` }} /></i></div>{step === 0 && <><p className="eyebrow">LAD OS STARTE ROLIGT</p><h2>Hvor begynder du?</h2><p className="sub">Cirka-tal er helt fine. Planen bruger dem til at vælge et realistisk tempo.</p><div className="field-grid"><NumberField label="Alder" value={profile.age} min={18} max={80} unit="år" onChange={(v) => update("age", v)} /><NumberField label="Højde" value={profile.height} min={130} max={220} unit="cm" onChange={(v) => update("height", v)} /><NumberField label="Vægt nu" value={profile.weight} min={40} max={300} unit="kg" onChange={(v) => update("weight", v)} /><NumberField label="Første målvægt" value={profile.targetWeight} min={40} max={280} unit="kg" onChange={(v) => update("targetWeight", v)} /></div><Choice label="Dit aktivitetsniveau" value={profile.activity} onChange={(v) => update("activity", v as Profile["activity"])} options={[['starter','Jeg starter næsten fra nul'],['light','Jeg bevæger mig lidt'],['regular','Jeg er allerede regelmæssigt aktiv']]} /><Choice label="Tempo for planen" value={profile.pace} onChange={(v) => update("pace", v as Profile["pace"])} options={[['gentle','Blid start'],['steady','Rolig, men stabil fremgang']]} /></>}
+        {step === 1 && <><p className="eyebrow">ALMINDELIG MAD</p><h2>Hvordan vil du helst spise?</h2><p className="sub">Ingen forbudslister. Vi tilpasser råvarer, portioner og tidsforbrug.</p><Choice label="Kostretning" value={profile.diet} onChange={(v) => update("diet", v as Profile["diet"])} options={[['flex','Fleksibelt – kød, fisk og grønt'],['vegetarian','Vegetarisk'],['pescetarian','Vegetarisk + fisk']]} /><div className="field-grid"><NumberField label="Tid til aftensmad" value={profile.cookingMinutes} min={10} max={90} unit="min" onChange={(v) => update("cookingMinutes", v)} /><label className="text-field">Allergier eller intolerancer<input value={profile.allergies} onChange={(e) => update("allergies", e.target.value)} placeholder="Fx nødder eller laktose" /></label><label className="text-field wide">Mad du ikke bryder dig om<input value={profile.dislikes} onChange={(e) => update("dislikes", e.target.value)} placeholder="Fx fisk, svampe eller stærk mad" /></label></div></>}
+        {step === 2 && <><p className="eyebrow">VÆLG DET MULIGE</p><h2>Hvordan vil du bevæge dig?</h2><p className="sub">Vælg gerne flere. Hver aktivitet får et kortere alternativ til travle eller trætte dage.</p><div className="activity-select"><Toggle icon="🚶" title="Gåture" text="Roligt tempo, korte eller længere ture" checked={profile.walk} onChange={(v) => update("walk", v)} /><Toggle icon="🏊" title="Svømning" text="Baner, gang i vand og pauser" checked={profile.swim} onChange={(v) => update("swim", v)} /><Toggle icon="💪" title="Styrke" text="Hjemme eller i træningscenter" checked={profile.strength} onChange={(v) => update("strength", v)} /></div><div className="field-grid"><NumberField label="Tid pr. træningsdag" value={profile.minutes} min={10} max={90} unit="min" onChange={(v) => update("minutes", v)} /></div><Choice label="Hvor træner du helst?" value={profile.trainingPlace} onChange={(v) => update("trainingPlace", v as Profile["trainingPlace"])} options={[['home','Hjemme'],['gym','Træningscenter'],['mix','En blanding']]} /><div className="considerations"><p>Skal planen tage hensyn?</p><label><input type="checkbox" checked={profile.knees} onChange={(e) => update("knees", e.target.checked)} /> Knæ</label><label><input type="checkbox" checked={profile.back} onChange={(e) => update("back", e.target.checked)} /> Ryg</label></div></>}
+        {step === 3 && <><p className="eyebrow">SIKKERHED FØRST</p><h2>Er der noget vigtigt, planen skal vide?</h2><p className="sub">Svarene bruges til at stoppe eller gøre planen mere forsigtig. Fri Form erstatter ikke læge eller diætist.</p><div className="health-list"><label><input type="checkbox" checked={profile.diabetes} onChange={(e) => update("diabetes", e.target.checked)} /><span><b>Diabetes eller blodsukkerbehandling</b><small>Tal med din behandler ved ændringer i kost og aktivitet.</small></span></label><label><input type="checkbox" checked={profile.heart} onChange={(e) => update("heart", e.target.checked)} /><span><b>Hjertesygdom</b><small>Vi stopper automatisk planlægningen og henviser til læge.</small></span></label><label><input type="checkbox" checked={profile.pregnant} onChange={(e) => update("pregnant", e.target.checked)} /><span><b>Gravid</b><small>Vægttab bør planlægges med jordemoder eller læge.</small></span></label><label><input type="checkbox" checked={profile.eatingDisorder} onChange={(e) => update("eatingDisorder", e.target.checked)} /><span><b>Nuværende eller tidligere spiseforstyrrelse</b><small>En individuel plan bør laves med en fagperson.</small></span></label></div><label className="consent"><input type="checkbox" checked={profile.consent} onChange={(e) => update("consent", e.target.checked)} /><span><b>Jeg accepterer behandlingen af mine oplysninger</b><small>Din profil gemmes på Fri Forms server. En pseudonymiseret profil uden navn og e-mail sendes til OpenCode Go for at skrive planen. Du kan slette alt fra din konto.</small></span></label>{error && <p className="form-error" role="alert">{error}</p>}{busy && <div className="generating"><span className="loader" /><div><b>Din uge bliver skrevet…</b><small>AI’en samler mad, aktiviteter og alternativer. Det tager normalt 30–120 sekunder.</small></div></div>}</>}
+        <div className="onboard-actions"><button className="secondary" onClick={() => step > 0 ? setStep(step - 1) : onLogout()}>{step > 0 ? "← Tilbage" : "Log ud"}</button><button className="primary" disabled={busy || (step === 3 && !profile.consent)} onClick={() => step < 3 ? setStep(step + 1) : generate()}>{step < 3 ? "Fortsæt →" : busy ? "Laver planen…" : "Lav og send min plan →"}</button></div></section></div></main>;
 }
 
-function Food() {
-  return <><div className="dash-heading compact"><div><p className="section-kicker">MAD DER PASSER TIL ET LIV</p><h1>En enkel maddag</h1><p>Portionerne er pejlemærker. Spis langsomt, og stop når du er behageligt mæt.</p></div></div><div className="plate-rule"><div className="big-plate"><span>½<small>grønt</small></span><i>¼<small>protein</small></i><b>¼<small>kartofler<br />eller fuldkorn</small></b></div><div><p className="section-kicker">TALLERKENMODELLEN</p><h2>Du behøver ikke veje alt.</h2><p>Lad grøntsager fylde halvdelen, protein en fjerdedel og kartofler, ris, pasta eller brød den sidste fjerdedel. Tilføj lidt fedtstof og drik vand.</p></div></div><div className="meal-list">{meals.map(m => <article key={m.time}><span className="meal-emoji">{m.icon}</span><div><p>{m.time}</p><h3>{m.title}</h3><small>{m.detail}</small><em>{m.note}</em></div></article>)}</div><div className="shopping"><h2>En lille indkøbsliste</h2><div><span>Havregryn</span><span>Skyr</span><span>Rugbrød</span><span>Æg</span><span>Kylling eller bønner</span><span>Kartofler</span><span>Frosne grøntsager</span><span>Frugt</span></div></div></>;
+function NumberField({ label, value, min, max, unit, onChange }: { label: string; value: number; min: number; max: number; unit: string; onChange: (v: number) => void }) {
+  return <label className="number-field"><span>{label}</span><div><input type="number" value={value} min={min} max={max} onChange={(e) => onChange(Number(e.target.value))} /><b>{unit}</b></div></label>;
 }
 
-function Progress({ answers, completed }: { answers: PlanAnswers; completed: number }) {
-  const checkpoints = useMemo(() => [answers.weight, answers.weight - answers.goal / 3, answers.weight - answers.goal * 2 / 3, answers.weight - answers.goal], [answers]);
-  return <><div className="dash-heading compact"><div><p className="section-kicker">FREMGANG UDEN PRES</p><h1>Se retningen,<br />ikke kun tallet.</h1><p>Vejning er valgfri. Energi, søvn og vaner er også fremgang.</p></div></div><div className="progress-cards"><article><span>✓</span><b>{completed}</b><p>små skridt klaret</p></article><article><span>↗</span><b>{answers.goal} kg</b><p>første langsigtede mål</p></article><article><span>○</span><b>7 dage</b><p>ad gangen</p></article></div><div className="journey"><div className="journey-head"><h2>Din vej i etaper</h2><span>Start: {answers.weight} kg</span></div><div className="journey-line">{checkpoints.map((n,i) => <div key={i} className={i === 0 ? "current" : ""}><i>{i === 0 ? "✓" : i}</i><b>{Math.round(n * 10) / 10} kg</b><small>{i === 0 ? "Her starter du" : i === 3 ? "Dit første mål" : "Mellemstation"}</small></div>)}</div></div><div className="checkin"><div><p className="section-kicker">UGENS CHECK-IN</p><h2>Hvad gik lidt lettere?</h2><p>Skriv det ned et sted du ser igen. Gentag det, der virkede—ikke nødvendigvis det hele.</p></div><span>✎</span></div></>;
+function Choice({ label, value, options, onChange }: { label: string; value: string; options: string[][]; onChange: (v: string) => void }) {
+  return <fieldset className="choice"><legend>{label}</legend><div>{options.map(([key, text]) => <label key={key} className={value === key ? "selected" : ""}><input type="radio" checked={value === key} onChange={() => onChange(key)} /><span>{text}</span></label>)}</div></fieldset>;
 }
 
-function Footer() {
-  return <footer><div className="footer-brand"><span className="brand-mark"><i /></span><b>FRI FORM</b><p>Gratis hjælp til små, holdbare skridt.</p></div><div><b>Fagligt grundlag</b><a href="https://foedevarestyrelsen.dk/kost-og-foedevarer/alt-om-mad/de-officielle-kostraad/kostraad-til-dig" target="_blank" rel="noreferrer">De officielle Kostråd</a><a href="https://www.sst.dk/vidensbase/forebyggelse/anbefalinger-om-fysisk-aktivitet/anbefalinger-om-fysisk-aktivitet-og-stillesiddende-tid/anbefalinger-om-fysisk-aktivitet-og-stillesiddende-tid-for-voksne-18-til-64-aar" target="_blank" rel="noreferrer">Sundhedsstyrelsens aktivitetsråd</a></div><div><b>Om tjenesten</b><p>Ingen konto. Ingen betaling. Dine valg gemmes kun lokalt i din browser.</p></div><small>© 2026 Fri Form · Generel information—ikke lægelig rådgivning.</small></footer>;
+function Toggle({ icon, title, text, checked, onChange }: { icon: string; title: string; text: string; checked: boolean; onChange: (v: boolean) => void }) {
+  return <label className={checked ? "selected" : ""}><input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} /><i>{icon}</i><span><b>{title}</b><small>{text}</small></span><em>{checked ? "✓" : "+"}</em></label>;
 }
+
+function Dashboard({ user, csrf, plan, provider, profile, checkins, setCheckins, onNewPlan, onLogout }: { user: User; csrf: string; plan: Plan; provider: string; profile: Profile; checkins: Checkin[]; setCheckins: (c: Checkin[]) => void; onNewPlan: () => void; onLogout: () => void }) {
+  const [tab, setTab] = useState<Tab>("today");
+  const [notice, setNotice] = useState(sessionStorage.getItem("friform-email-warning") || "");
+  const [emailBusy, setEmailBusy] = useState(false);
+  const index = (new Date().getDay() + 6) % 7;
+  const day = plan.days[index] || plan.days[0];
+  const key = todayKey();
+  const completed = new Set(checkins.filter((c) => c.day === key && c.completed).map((c) => c.item_id));
+  const toggle = async (itemId: string) => {
+    const isDone = completed.has(itemId);
+    const next = checkins.filter((c) => !(c.day === key && c.item_id === itemId));
+    next.push({ day: key, item_id: itemId, completed: isDone ? 0 : 1 });
+    setCheckins(next);
+    try { await api("/api/checkin", { method: "POST", body: JSON.stringify({ day: key, itemId, completed: !isDone }) }, csrf); }
+    catch { setNotice("Fluebenet kunne ikke gemmes. Prøv igen."); }
+  };
+  const resend = async () => {
+    setEmailBusy(true); setNotice("");
+    try { await api("/api/plan/email", { method: "POST", body: "{}" }, csrf); setNotice(`Planen er sendt til ${user.email}.`); sessionStorage.removeItem("friform-email-warning"); }
+    catch (err) { setNotice(err instanceof Error ? err.message : "Mailen kunne ikke sendes."); } finally { setEmailBusy(false); }
+  };
+  const nav: [Tab, string, string][] = [["today","I dag","☀"],["week","Ugen","▦"],["food","Mad","◒"],["training","Træning","↗"],["progress","Fremgang","◎"]];
+  return <main className="app"><header className="app-header"><Brand /><div className="user-menu"><span><b>{user.name}</b><small>{user.email}</small></span><button className="link-button" onClick={onLogout}>Log ud</button></div></header><div className="app-layout"><aside className="side-nav"><p className="eyebrow">MIN PLAN</p>{nav.map(([id, label, icon]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><i>{icon}</i>{label}</button>)}<div className="side-card"><b>Ugens fokus</b><p>{plan.weeklyFocus}</p></div><button className="new-plan" onClick={onNewPlan}>↻ Tilpas eller lav ny plan</button></aside><section className="main-panel">{notice && <div className="notice"><span>{notice}</span><button onClick={() => setNotice("")}>×</button></div>}{tab === "today" && <TodayView day={day} completed={completed} toggle={toggle} onOpen={(next) => setTab(next)} />}{tab === "week" && <WeekView plan={plan} />}{tab === "food" && <FoodView plan={plan} />}{tab === "training" && <TrainingView plan={plan} />}{tab === "progress" && <ProgressView plan={plan} profile={profile} csrf={csrf} checkins={checkins} setCheckins={setCheckins} resend={resend} emailBusy={emailBusy} provider={provider} />}</section></div><nav className="mobile-nav">{nav.map(([id,label,icon]) => <button key={id} className={tab === id ? "active" : ""} onClick={() => setTab(id)}><i>{icon}</i><span>{label}</span></button>)}</nav></main>;
+}
+
+function TodayView({ day, completed, toggle, onOpen }: { day: PlanDay; completed: Set<string>; toggle: (id: string) => void; onOpen: (t: Tab) => void }) {
+  const tasks = [{ id: "breakfast", icon: "🥣", title: day.meals.breakfast.title, text: day.meals.breakfast.portion }, { id: "movement", icon: day.movement.type === "svømning" ? "🏊" : day.movement.type === "styrke" ? "💪" : "🚶", title: day.movement.title, text: `${day.movement.minutes} min · ${day.movement.intensity}` }, { id: "habit", icon: "✦", title: day.habit, text: "Dagens lille vane" }, { id: "dinner", icon: "½", title: day.meals.dinner.title, text: day.meals.dinner.portion }];
+  return <><div className="page-heading"><div><p className="eyebrow">{day.name.toUpperCase()} · DAG {day.day}</p><h1>I dag gør vi det<br />muligt at lykkes.</h1><p>{day.focus}</p></div><div className="completion-ring" style={{ "--done": `${completed.size * 25}%` } as React.CSSProperties}><span><b>{Math.min(completed.size, 4)}</b><small>af 4</small></span></div></div><div className="today-layout"><section className="daily-tasks"><div className="section-head"><h2>Dagens plan</h2><span>{Math.min(completed.size, 4)}/4 klaret</span></div>{tasks.map((task) => <button key={task.id} className={completed.has(task.id) ? "done" : ""} onClick={() => toggle(task.id)}><i>{completed.has(task.id) ? "✓" : task.icon}</i><span><b>{task.title}</b><small>{task.text}</small></span><em>{completed.has(task.id) ? "Klaret" : "Markér"}</em></button>)}<blockquote>“{day.encouragement}”</blockquote></section><aside className="today-detail"><div className="movement-card"><p className="eyebrow">DAGENS BEVÆGELSE</p><h2>{day.movement.title}</h2><span className="duration">{day.movement.minutes}<small>minutter</small></span><ol>{day.movement.instructions.map((item) => <li key={item}>{item}</li>)}</ol><p className="alternative"><b>Kortere alternativ:</b> {day.movement.alternative}</p><button onClick={() => onOpen("training")}>Se træningsguiden →</button></div><div className="mini-tips"><span><b>💧 Vand</b><small>Et glas til hvert hovedmåltid</small></span><span><b>🌙 Søvn</b><small>En rolig afslutning tæller</small></span></div></aside></div></>;
+}
+
+function WeekView({ plan }: { plan: Plan }) {
+  const [open, setOpen] = useState(0);
+  return <><div className="page-heading compact"><div><p className="eyebrow">DIN PERSONLIGE UGE</p><h1>{plan.title}</h1><p>{plan.intro}</p></div></div><div className="week-grid">{plan.days.map((day, index) => <article className={open === index ? "open" : ""} key={day.day}><button onClick={() => setOpen(open === index ? -1 : index)}><span><small>DAG {day.day}</small><b>{day.name}</b></span><span className="week-activity"><i>{day.movement.type === "svømning" ? "🏊" : day.movement.type === "styrke" ? "💪" : day.movement.type === "restitution" ? "🌿" : "🚶"}</i><b>{day.movement.title}</b><small>{day.movement.minutes} min</small></span><em>{open === index ? "−" : "+"}</em></button>{open === index && <div className="day-details"><div><h3>Dagens måltider</h3><MealLine label="Morgen" meal={day.meals.breakfast} /><MealLine label="Frokost" meal={day.meals.lunch} /><MealLine label="Aften" meal={day.meals.dinner} /><MealLine label="Hvis sulten" meal={day.meals.snack} /></div><div><h3>Bevægelse</h3><p><b>{day.movement.title}</b><br />{day.movement.intensity}</p><ul>{day.movement.instructions.map((item) => <li key={item}>{item}</li>)}</ul><p><b>Alternativ:</b> {day.movement.alternative}</p></div></div>}</article>)}</div><div className="safety-callout"><i>i</i><p><b>Din krop bestemmer tempoet.</b> {plan.safetyNote}</p></div></>;
+}
+
+function MealLine({ label, meal }: { label: string; meal: Meal }) { return <p className="meal-line"><span>{label}</span><b>{meal.title}</b><small>{meal.portion}</small></p>; }
+
+function FoodView({ plan }: { plan: Plan }) {
+  const [dayIndex, setDayIndex] = useState(0); const day = plan.days[dayIndex];
+  return <><div className="page-heading compact"><div><p className="eyebrow">MAD UDEN FORBUD</p><h1>Din madplan</h1><p>Konkrete forslag og portionsgreb. Byt gerne dage og måltider rundt.</p></div></div><div className="day-pills">{plan.days.map((item, index) => <button className={index === dayIndex ? "active" : ""} onClick={() => setDayIndex(index)} key={item.day}>{item.name.slice(0, 3)}</button>)}</div><div className="food-layout"><section className="meal-cards">{Object.entries(day.meals).map(([key, meal]) => <article key={key}><span>{key === "breakfast" ? "🥣" : key === "lunch" ? "🥪" : key === "dinner" ? "🍲" : "🍎"}</span><div><p>{key === "breakfast" ? "MORGEN" : key === "lunch" ? "FROKOST" : key === "dinner" ? "AFTEN" : "HVIS SULTEN"}</p><h3>{meal.title}</h3>{meal.ingredients && <small>{meal.ingredients.join(" · ")}</small>}<em>{meal.portion}</em></div></article>)}</section><aside><div className="plate-card"><div className="plate"><span>½<small>grønt</small></span><i>¼<small>protein</small></i><b>¼<small>fuldkorn<br />eller kartofler</small></b></div><h3>Tallerkenmodellen</h3><p>Et enkelt pejlemærke uden at veje og tælle alt.</p></div><div className="tips-card"><p>💧 {plan.waterTip}</p><p>🌙 {plan.sleepTip}</p></div></aside></div><Shopping plan={plan} /></>;
+}
+
+function Shopping({ plan }: { plan: Plan }) { const labels: Record<string,string> = { "grønt":"Grønt og frugt", "protein":"Protein", "fuldkornOgKartofler":"Fuldkorn og kartofler", "andet":"Det øvrige" }; return <section className="shopping"><div className="section-head"><h2>Ugens indkøbsliste</h2><button onClick={() => window.print()}>Print</button></div><div>{Object.entries(plan.shoppingList).map(([group, items]) => <article key={group}><h3>{labels[group] || group}</h3>{items.map((item) => <label key={item}><input type="checkbox" /> {item}</label>)}</article>)}</div></section>; }
+
+function TrainingView({ plan }: { plan: Plan }) {
+  return <><div className="page-heading compact"><div><p className="eyebrow">GÅ · SVØM · BLIV STÆRKERE</p><h1>Din træningsguide</h1><p>Alle pas starter roligt. Du skal kunne kontrollere bevægelsen og stoppe ved smerte.</p></div></div><section className="training-section"><div className="training-title"><span>💪</span><div><p className="eyebrow">STYRKE</p><h2>Rolige øvelser for hele kroppen</h2></div></div><div className="exercise-list">{plan.strengthGuide.map((item, index) => <article key={item.exercise}><i>{index + 1}</i><div><h3>{item.exercise}</h3><p>{item.how}</p><span>{item.sets} sæt · {item.reps} gentagelser</span><small><b>Lettere:</b> {item.easier}</small></div></article>)}</div></section>{plan.swimGuide.length > 0 && <section className="training-section swim-section"><div className="training-title"><span>🏊</span><div><p className="eyebrow">SVØMNING</p><h2>Et roligt pas i vandet</h2></div></div><div className="swim-timeline">{plan.swimGuide.map((item) => <article key={item.part}><b>{item.minutes}<small>min</small></b><div><h3>{item.part}</h3><p>{item.how}</p></div></article>)}</div></section>}<section className="walk-guide"><span>🚶</span><div><p className="eyebrow">GÅTURE</p><h2>Brug snakketesten</h2><p>Du skal kunne sige en hel sætning uden at hive efter vejret. Er dagen tung, så halver tiden eller del turen i to.</p></div></section></>;
+}
+
+function ProgressView({ plan, profile, csrf, checkins, setCheckins, resend, emailBusy, provider }: { plan: Plan; profile: Profile; csrf: string; checkins: Checkin[]; setCheckins: (v: Checkin[]) => void; resend: () => void; emailBusy: boolean; provider: string }) {
+  const [weight, setWeight] = useState(profile.weight); const [mood, setMood] = useState(3); const [saved, setSaved] = useState(false); const key = todayKey();
+  const completed = checkins.filter((c) => c.completed).length; const days = new Set(checkins.filter((c) => c.completed).map((c) => c.day)).size;
+  const save = async () => { await api("/api/checkin", { method: "POST", body: JSON.stringify({ day: key, itemId: "daily-checkin", completed: true, weight, mood }) }, csrf); const next = checkins.filter((c) => !(c.day === key && c.item_id === "daily-checkin")); next.push({ day: key, item_id: "daily-checkin", completed: 1, weight, mood }); setCheckins(next); setSaved(true); };
+  const deleteAccount = async () => { if (!window.confirm("Slet konto, profil, planer og alle check-ins permanent?")) return; await api("/api/account", { method: "DELETE" }, csrf); window.location.reload(); };
+  return <><div className="page-heading compact"><div><p className="eyebrow">FREMGANG UDEN PRES</p><h1>Se retningen.<br />Ikke kun tallet.</h1><p>Energi, vaner og gentagelser tæller også som fremgang.</p></div></div><div className="stat-grid"><article><span>✓</span><b>{completed}</b><small>små skridt klaret</small></article><article><span>▦</span><b>{days}</b><small>aktive dage</small></article><article><span>↘</span><b>{Math.round((profile.weight - profile.targetWeight) * 10) / 10} kg</b><small>dit første mål</small></article></div><section className="checkin-card"><div><p className="eyebrow">DAGENS CHECK-IN</p><h2>Hvordan går det?</h2><p>Vejning er valgfri. Brug samme tidspunkt og se på udviklingen over flere uger.</p></div><div className="checkin-form"><NumberField label="Vægt i dag" value={weight} min={40} max={300} unit="kg" onChange={setWeight} /><label>Energi i dag<div className="mood-scale">{[1,2,3,4,5].map((n) => <button className={mood === n ? "active" : ""} key={n} onClick={() => setMood(n)}>{n}</button>)}</div></label><button className="primary" onClick={save}>{saved ? "Gemt ✓" : "Gem check-in"}</button></div></section><section className="reflection"><h2>Ugens refleksion</h2>{plan.checkInQuestions.map((question) => <label key={question}>{question}<textarea rows={2} placeholder="Skriv til dig selv…" /></label>)}</section><section className="account-card"><div><p className="eyebrow">DIN KONTO</p><h2>Plan og persondata</h2><p>Planen er lavet med {provider.startsWith("opencode") ? "OpenCode Go" : provider.startsWith("ollama") ? "lokal Gemma" : "den validerede reserveskabelon"}. Navn og e-mail sendes aldrig til AI-modellen.</p></div><div><button className="secondary" onClick={resend} disabled={emailBusy}>{emailBusy ? "Sender…" : "Send hele planen på mail"}</button><button className="danger" onClick={deleteAccount}>Slet min konto og alle data</button></div></section><div className="safety-callout"><i>i</i><p><b>Generel vejledning.</b> {plan.medicalReminder}</p></div></>;
+}
+
+function PublicFooter() { return <footer className="public-footer"><Brand /><div><b>Fagligt udgangspunkt</b><a href="https://foedevarestyrelsen.dk/kost-og-foedevarer/alt-om-mad/de-officielle-kostraad/kostraad-til-dig" target="_blank" rel="noreferrer">De officielle Kostråd</a><a href="https://www.sst.dk/vidensbase/forebyggelse/anbefalinger-om-fysisk-aktivitet" target="_blank" rel="noreferrer">Sundhedsstyrelsens aktivitetsråd</a></div><div><b>Privatliv</b><p>Din konto kan slettes direkte i appen. Profilen sendes uden navn og e-mail til AI.</p></div><small>© 2026 Fri Form · En gratis tjeneste fra Dybbol.com · Ikke lægelig rådgivning.</small></footer>; }
