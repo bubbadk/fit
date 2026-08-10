@@ -644,6 +644,41 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         self.serve_static(path)
 
+    def do_HEAD(self) -> None:
+        path = self.path.split("?", 1)[0]
+        if path == "/api/health":
+            self.send_response(200)
+            self.security_headers()
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        if path.startswith("/api/"):
+            self.send_error(404)
+            return
+        relative = path.lstrip("/") or "index.html"
+        candidate = (DIST / relative).resolve()
+        try:
+            candidate.relative_to(DIST.resolve())
+        except ValueError:
+            self.send_error(404)
+            return
+        if not candidate.is_file():
+            candidate = DIST / "index.html"
+        if not candidate.is_file():
+            self.send_error(503, "Build missing")
+            return
+        content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+        if candidate.suffix in {".js", ".css"}:
+            content_type += "; charset=utf-8"
+        self.send_response(200)
+        self.security_headers()
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(candidate.stat().st_size))
+        self.send_header("Cache-Control", "public, max-age=31536000, immutable" if "/assets/" in str(candidate).replace("\\", "/") else "no-cache")
+        self.end_headers()
+
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0]
         if not self.origin_ok():
