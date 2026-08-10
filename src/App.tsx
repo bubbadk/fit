@@ -184,8 +184,17 @@ function Onboarding({ user, csrf, profile, setProfile, onPlan, onLogout }: { use
     setError(""); setBusy(true);
     try {
       const data = await api("/api/plan/generate", { method: "POST", body: JSON.stringify({ profile }) }, csrf);
-      onPlan(data.plan, data.provider);
-      if (data.email_error) sessionStorage.setItem("friform-email-warning", data.email_error);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 3000));
+        const job = await api(`/api/plan/jobs/${data.job_id}`);
+        if (job.status === "done" && job.plan) {
+          if (!job.email_sent) sessionStorage.setItem("friform-email-warning", "Planen er gemt, men e-mailen kunne ikke sendes lige nu.");
+          onPlan(job.plan, job.provider);
+          return;
+        }
+        if (job.status === "failed") throw new Error(job.error || "Planen kunne ikke laves.");
+      }
+      throw new Error("Planen tager længere end forventet. Log ind igen om lidt — jobbet fortsætter på serveren.");
     } catch (err) { setError(err instanceof Error ? err.message : "Planen kunne ikke laves."); setBusy(false); }
   };
   const titles = ["Dit udgangspunkt", "Mad der passer til dig", "Bevægelse på din måde", "Helbred og samtykke"];

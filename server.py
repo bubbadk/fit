@@ -119,12 +119,25 @@ def init_db() -> None:
               updated_at TEXT NOT NULL,
               PRIMARY KEY (user_id, day, item_id)
             );
+            CREATE TABLE IF NOT EXISTS plan_jobs (
+              id TEXT PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              status TEXT NOT NULL,
+              error TEXT,
+              plan_id INTEGER REFERENCES plans(id) ON DELETE SET NULL,
+              provider TEXT,
+              email_sent INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_plans_user_created ON plans(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_checkins_user_day ON checkins(user_id, day);
+            CREATE INDEX IF NOT EXISTS idx_plan_jobs_user_created ON plan_jobs(user_id, created_at DESC);
             PRAGMA optimize;
             """
         )
+        conn.execute("UPDATE plan_jobs SET status='failed',error='Serveren blev genstartet. Lav planen igen.',updated_at=? WHERE status IN ('pending','running')", (iso_now(),))
 
 
 def b64hex(data: bytes) -> str:
@@ -535,6 +548,27 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
         smtp.send_message(message)
 
 
+def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: dict[str, Any]) -> None:
+    try:
+        with db() as conn:
+            conn.execute("UPDATE plan_jobs SET status='running',updated_at=? WHERE id=?", (iso_now(), job_id))
+        plan, provider = generate_ai_plan(profile)
+        email_sent = False
+        try:
+            send_plan_email(recipient, name, plan)
+            email_sent = True
+        except Exception as exc:
+            print(f"Email send failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        with db() as conn:
+            conn.execute("INSERT INTO profiles(user_id,data_json,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at", (user_id, json.dumps(profile, ensure_ascii=False), iso_now()))
+            cursor = conn.execute("INSERT INTO plans(user_id,plan_json,provider,created_at,emailed_at) VALUES(?,?,?,?,?)", (user_id, json.dumps(plan, ensure_ascii=False), provider, iso_now(), iso_now() if email_sent else None))
+            conn.execute("UPDATE plan_jobs SET status='done',plan_id=?,provider=?,email_sent=?,updated_at=? WHERE id=?", (cursor.lastrowid, provider, int(email_sent), iso_now(), job_id))
+    except Exception as exc:
+        print(f"Plan job failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+        with db() as conn:
+            conn.execute("UPDATE plan_jobs SET status='failed',error=?,updated_at=? WHERE id=?", ("Planen kunne ikke laves. Prøv igen om lidt.", iso_now(), job_id))
+
+
 class AppHandler(BaseHTTPRequestHandler):
     server_version = "FriForm/2"
 
@@ -639,6 +673,24 @@ class AppHandler(BaseHTTPRequestHandler):
                 "checkins": checkins,
             })
             return
+        if path.startswith("/api/plan/jobs/"):
+            session = self.require_session()
+            if not session:
+                return
+            job_id = path.rsplit("/", 1)[-1]
+            if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", job_id):
+                self.json_response(404, {"error": "Jobbet blev ikke fundet."})
+                return
+            with db() as conn:
+                job = conn.execute("SELECT status,error,plan_id,provider,email_sent,updated_at FROM plan_jobs WHERE id=? AND user_id=?", (job_id, session["user_id"])).fetchone()
+                plan_row = None
+                if job and job["status"] == "done" and job["plan_id"]:
+                    plan_row = conn.execute("SELECT plan_json FROM plans WHERE id=? AND user_id=?", (job["plan_id"], session["user_id"])).fetchone()
+            if not job:
+                self.json_response(404, {"error": "Jobbet blev ikke fundet."})
+                return
+            self.json_response(200, {"status": job["status"], "error": job["error"], "provider": job["provider"], "email_sent": bool(job["email_sent"]), "plan": json.loads(plan_row["plan_json"]) if plan_row else None, "updated_at": job["updated_at"]})
+            return
         if path.startswith("/api/"):
             self.json_response(404, {"error": "Ikke fundet."})
             return
@@ -738,18 +790,11 @@ class AppHandler(BaseHTTPRequestHandler):
                 if blocked:
                     self.json_response(422, {"error": blocked, "safety_block": True})
                     return
-                plan, provider = generate_ai_plan(profile)
-                email_sent, email_error = False, None
-                try:
-                    send_plan_email(session["email"], session["name"], plan)
-                    email_sent = True
-                except Exception as exc:
-                    email_error = "Planen er gemt, men e-mailen kunne ikke sendes lige nu."
-                    print(f"Email send failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+                job_id = secrets.token_urlsafe(18)
                 with db() as conn:
-                    conn.execute("INSERT INTO profiles(user_id,data_json,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at", (session["user_id"], json.dumps(profile, ensure_ascii=False), iso_now()))
-                    cursor = conn.execute("INSERT INTO plans(user_id,plan_json,provider,created_at,emailed_at) VALUES(?,?,?,?,?)", (session["user_id"], json.dumps(plan, ensure_ascii=False), provider, iso_now(), iso_now() if email_sent else None))
-                self.json_response(201, {"ok": True, "plan": plan, "plan_id": cursor.lastrowid, "provider": provider, "email_sent": email_sent, "email_error": email_error})
+                    conn.execute("INSERT INTO plan_jobs(id,user_id,status,created_at,updated_at) VALUES(?,?,?,?,?)", (job_id, session["user_id"], "pending", iso_now(), iso_now()))
+                threading.Thread(target=run_plan_job, args=(job_id, session["user_id"], session["email"], session["name"], profile), daemon=True, name=f"plan-{job_id[:8]}").start()
+                self.json_response(202, {"ok": True, "job_id": job_id, "status": "pending"})
                 return
 
             if path == "/api/plan/email":
