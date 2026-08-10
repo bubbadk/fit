@@ -665,9 +665,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         if not candidate.is_file():
-            candidate = DIST / "index.html"
-        if not candidate.is_file():
-            self.send_error(503, "Build missing")
+            self.send_error(404)
             return
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
         if candidate.suffix in {".js", ".css"}:
@@ -824,9 +822,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_error(404)
             return
         if not candidate.is_file():
-            candidate = DIST / "index.html"
-        if not candidate.is_file():
-            self.send_error(503, "Build missing")
+            self.send_error(404)
             return
         body = candidate.read_bytes()
         content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
