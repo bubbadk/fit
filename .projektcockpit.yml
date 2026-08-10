@@ -6,7 +6,7 @@
       "id": "fit",
       "name": "Fri Form web",
       "managed": true,
-      "command": ["npm", "exec", "--yes", "vite", "--", "--host", "0.0.0.0", "--port", "8963", "--strictPort"],
+      "command": ["sh", "-lc", "npm run build && exec python3 -m http.server 8963 --bind 0.0.0.0 --directory dist"],
       "cwd": ".",
       "url": "https://fit.dybbol.com/",
       "health_url": "http://127.0.0.1:8963/"
