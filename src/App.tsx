@@ -173,6 +173,13 @@ export default function App() {
         <p>Gør din plan klar…</p>
       </div>
     );
+  const resetPath = window.location.pathname === "/reset-password";
+  if (resetPath)
+    return (
+      <ResetPasswordPage
+        token={new URLSearchParams(window.location.search).get("token") || ""}
+      />
+    );
   const adminPath = window.location.pathname === "/admin";
   if (!user && adminPath) return <AdminAccess onAuth={refresh} />;
   if (!user)
@@ -481,6 +488,7 @@ function AuthModal({
   const [mode, setMode] = useState<"register" | "login">(initialMode);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [forgot, setForgot] = useState(false);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
@@ -503,6 +511,10 @@ function AuthModal({
       setBusy(false);
     }
   };
+  if (forgot)
+    return (
+      <ForgotPasswordModal onClose={onClose} onBack={() => setForgot(false)} />
+    );
   return (
     <div
       className="modal-backdrop"
@@ -581,6 +593,11 @@ function AuthModal({
                 : "Log ind"}
           </button>
         </form>
+        {mode === "login" && (
+          <button className="forgot-link" onClick={() => setForgot(true)}>
+            Glemt adgangskode?
+          </button>
+        )}
         <button
           className="switch-auth"
           onClick={() => {
@@ -598,6 +615,195 @@ function AuthModal({
         </small>
       </section>
     </div>
+  );
+}
+
+function ForgotPasswordModal({
+  onClose,
+  onBack,
+}: {
+  onClose: () => void;
+  onBack: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    const form = new FormData(event.currentTarget);
+    try {
+      await api("/api/auth/forgot-password", {
+        method: "POST",
+        body: JSON.stringify({ email: form.get("email") }),
+      });
+      setSent(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Mailen kunne ikke bestilles.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section
+        className="auth-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="forgot-title"
+      >
+        <button className="modal-close" onClick={onClose} aria-label="Luk">
+          ×
+        </button>
+        <Brand />
+        <p className="eyebrow">HJÆLP TIL LOGIN</p>
+        <h2 id="forgot-title">
+          {sent ? "Se efter en mail fra os." : "Glemt adgangskoden?"}
+        </h2>
+        {sent ? (
+          <>
+            <p>
+              Hvis adressen findes hos Fri Form, har vi sendt et engangslink.
+              Det gælder i 60 minutter.
+            </p>
+            <div className="success-message">
+              Tjek også spam eller uønsket post.
+            </div>
+            <button className="primary full" onClick={onBack}>
+              Tilbage til login
+            </button>
+          </>
+        ) : (
+          <>
+            <p>
+              Indtast mailadressen til din konto, så sender vi et sikkert link
+              til en ny adgangskode.
+            </p>
+            <form onSubmit={submit}>
+              <label>
+                E-mail
+                <input
+                  name="email"
+                  type="email"
+                  autoComplete="email"
+                  required
+                  placeholder="dig@eksempel.dk"
+                />
+              </label>
+              {error && (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <button className="primary full" disabled={busy}>
+                {busy ? "Sender…" : "Send nulstillingslink"}
+              </button>
+            </form>
+            <button className="switch-auth" onClick={onBack}>
+              ← Tilbage til login
+            </button>
+          </>
+        )}
+      </section>
+    </div>
+  );
+}
+
+function ResetPasswordPage({ token }: { token: string }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [error, setError] = useState(
+    token ? "" : "Linket mangler eller er ugyldigt.",
+  );
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setError("");
+    const form = new FormData(event.currentTarget);
+    const password = String(form.get("password") || "");
+    const repeat = String(form.get("repeat") || "");
+    if (password !== repeat) {
+      setError("De to adgangskoder er ikke ens.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api("/api/auth/reset-password", {
+        method: "POST",
+        body: JSON.stringify({ token, password }),
+      });
+      setDone(true);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Adgangskoden kunne ikke ændres.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <main className="reset-page">
+      <section className="reset-card">
+        <Brand />
+        <p className="eyebrow">FRI FORM · SIKKERT LOGIN</p>
+        <h1>
+          {done ? "Din adgangskode er ændret." : "Vælg en ny adgangskode."}
+        </h1>
+        {done ? (
+          <>
+            <p>
+              Alle gamle login-sessioner er lukket. Du kan nu logge ind med din
+              nye adgangskode.
+            </p>
+            <button
+              className="primary large"
+              onClick={() => {
+                window.location.href = "/";
+              }}
+            >
+              Gå til login
+            </button>
+          </>
+        ) : (
+          <form onSubmit={submit}>
+            <label>
+              Ny adgangskode
+              <input
+                name="password"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                required
+                placeholder="Mindst 10 tegn"
+              />
+            </label>
+            <label>
+              Gentag adgangskoden
+              <input
+                name="repeat"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                required
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <button className="primary full" disabled={busy || !token}>
+              {busy ? "Gemmer…" : "Gem ny adgangskode"}
+            </button>
+          </form>
+        )}
+        <small>
+          Linket kan kun bruges én gang og udløber efter 60 minutter.
+        </small>
+      </section>
+    </main>
   );
 }
 

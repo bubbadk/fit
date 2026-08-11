@@ -131,14 +131,23 @@ def init_db() -> None:
               created_at TEXT NOT NULL,
               updated_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS password_reset_tokens (
+              token_hash TEXT PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              expires_at TEXT NOT NULL,
+              used_at TEXT,
+              created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_plans_user_created ON plans(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_checkins_user_day ON checkins(user_id, day);
             CREATE INDEX IF NOT EXISTS idx_plan_jobs_user_created ON plan_jobs(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id, created_at DESC);
             PRAGMA optimize;
             """
         )
         conn.execute("UPDATE plan_jobs SET status='failed',error='Serveren blev genstartet. Lav planen igen.',updated_at=? WHERE status IN ('pending','running')", (iso_now(),))
+        conn.execute("DELETE FROM password_reset_tokens WHERE expires_at<?", (iso_now(),))
 
 
 def b64hex(data: bytes) -> str:
@@ -507,11 +516,56 @@ def fallback_plan(profile: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
+def send_email_message(message: EmailMessage) -> None:
     user = os.getenv("GMAIL_SMTP_USER", "").strip()
     password = os.getenv("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
     if not user or not password:
         raise RuntimeError("Gmail SMTP er ikke konfigureret.")
+    context = ssl.create_default_context()
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=30) as smtp:
+        smtp.login(user, password)
+        smtp.send_message(message)
+
+
+def send_password_reset_email(recipient: str, name: str, raw_token: str) -> None:
+    user = os.getenv("GMAIL_SMTP_USER", "").strip()
+    reset_url = f"https://fit.dybbol.com/reset-password?token={raw_token}"
+    message = EmailMessage()
+    message["Subject"] = "Nulstil din adgangskode til Fri Form"
+    message["From"] = f"Fri Form <{user}>"
+    message["To"] = recipient
+    message.set_content(
+        f"Hej {name}\n\nBrug dette engangslink til at vælge en ny adgangskode:\n{reset_url}\n\n"
+        "Linket udløber efter 60 minutter. Hvis du ikke bad om det, kan du bare ignorere mailen."
+    )
+    message.add_alternative(
+        f"""
+        <div style="font-family:Arial,sans-serif;max-width:620px;margin:auto;color:#24342e;line-height:1.6">
+          <div style="background:#173f31;color:white;padding:26px;border-radius:18px 18px 0 0">
+            <small style="letter-spacing:2px">FRI FORM · ALTID GRATIS</small>
+            <h1 style="margin:8px 0 0">Vælg en ny adgangskode</h1>
+          </div>
+          <div style="padding:28px;background:#fbfaf4">
+            <p>Hej {html.escape(name)},</p>
+            <p>Du har bedt om at få nulstillet adgangskoden til Fri Form.</p>
+            <p><a href="{html.escape(reset_url)}" style="display:inline-block;background:#e56f3d;color:white;padding:13px 20px;border-radius:999px;text-decoration:none;font-weight:bold">Vælg ny adgangskode</a></p>
+            <p style="color:#64756f;font-size:14px">Linket kan kun bruges én gang og udløber efter 60 minutter. Hvis du ikke bad om det, skal du ikke gøre noget.</p>
+          </div>
+        </div>""",
+        subtype="html",
+    )
+    send_email_message(message)
+
+
+def send_password_reset_email_safely(recipient: str, name: str, raw_token: str) -> None:
+    try:
+        send_password_reset_email(recipient, name, raw_token)
+    except Exception as exc:
+        print(f"Password reset email failed: {type(exc).__name__}", file=sys.stderr, flush=True)
+
+
+def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
+    user = os.getenv("GMAIL_SMTP_USER", "").strip()
     message = EmailMessage()
     message["Subject"] = "Din Fri Form-plan er klar"
     message["From"] = f"Fri Form <{user}>"
@@ -550,10 +604,7 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
     </div>"""
     message.set_content(plain)
     message.add_alternative(html_body, subtype="html")
-    context = ssl.create_default_context()
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=context, timeout=30) as smtp:
-        smtp.login(user, password)
-        smtp.send_message(message)
+    send_email_message(message)
 
 
 def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: dict[str, Any]) -> None:
@@ -751,7 +802,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             self.send_error(404)
             return
-        relative = "index.html" if path in {"/", "/admin"} else path.lstrip("/")
+        relative = "index.html" if path in {"/", "/admin", "/reset-password"} else path.lstrip("/")
         candidate = (DIST / relative).resolve()
         try:
             candidate.relative_to(DIST.resolve())
@@ -809,6 +860,61 @@ class AppHandler(BaseHTTPRequestHandler):
                     conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (iso_now(), user["id"]))
                 cookie = f"{COOKIE_NAME}={raw}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax"
                 self.json_response(200, {"ok": True, "csrf": csrf, "user": {"email": user["email"], "name": user["name"], "isAdmin": user["email"].lower() == ADMIN_EMAIL}}, {"Set-Cookie": cookie})
+                return
+
+            if path == "/api/auth/forgot-password":
+                data = self.read_json()
+                email = clean_email(data.get("email"))
+                email_key = hashlib.sha256(email.encode()).hexdigest()[:20]
+                allowed = rate_allowed(f"forgot-ip:{self.client_ip}", 8, 3600)
+                allowed = rate_allowed(f"forgot-email:{email_key}", 3, 3600) and allowed
+                if allowed:
+                    with db() as conn:
+                        user = conn.execute("SELECT id,email,name FROM users WHERE email=?", (email,)).fetchone()
+                        if user:
+                            raw_token = secrets.token_urlsafe(32)
+                            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                            conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL", (iso_now(), user["id"]))
+                            conn.execute(
+                                "INSERT INTO password_reset_tokens(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)",
+                                (token_hash, user["id"], (utc_now() + timedelta(minutes=60)).isoformat(), iso_now()),
+                            )
+                            threading.Thread(
+                                target=send_password_reset_email_safely,
+                                args=(user["email"], user["name"], raw_token),
+                                daemon=True,
+                                name=f"reset-{user['id']}",
+                            ).start()
+                self.json_response(200, {"ok": True, "message": "Hvis adressen findes, sender vi et nulstillingslink."})
+                return
+
+            if path == "/api/auth/reset-password":
+                if not rate_allowed(f"reset:{self.client_ip}", 10, 3600):
+                    self.json_response(429, {"error": "For mange forsøg. Prøv igen senere."})
+                    return
+                data = self.read_json()
+                raw_token = str(data.get("token", ""))
+                if not re.fullmatch(r"[A-Za-z0-9_-]{32,100}", raw_token):
+                    raise ValueError("Linket er ugyldigt eller udløbet.")
+                password = validate_password(data.get("password"))
+                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                with db() as conn:
+                    token = conn.execute(
+                        "SELECT user_id FROM password_reset_tokens WHERE token_hash=? AND used_at IS NULL AND expires_at>?",
+                        (token_hash, iso_now()),
+                    ).fetchone()
+                    if not token:
+                        raise ValueError("Linket er ugyldigt eller udløbet.")
+                    changed = conn.execute(
+                        "UPDATE password_reset_tokens SET used_at=? WHERE token_hash=? AND used_at IS NULL",
+                        (iso_now(), token_hash),
+                    )
+                    if changed.rowcount != 1:
+                        raise ValueError("Linket er ugyldigt eller udløbet.")
+                    conn.execute("UPDATE users SET password_hash=? WHERE id=?", (password_hash(password), token["user_id"]))
+                    conn.execute("DELETE FROM sessions WHERE user_id=?", (token["user_id"],))
+                    conn.execute("UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL", (iso_now(), token["user_id"]))
+                self.json_response(200, {"ok": True}, {"Set-Cookie": f"{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"})
                 return
 
             if path == "/api/auth/logout":
@@ -901,7 +1007,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self.json_response(200, {"ok": True}, {"Set-Cookie": f"{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"})
 
     def serve_static(self, request_path: str) -> None:
-        relative = "index.html" if request_path in {"/", "/admin"} else request_path.lstrip("/")
+        relative = "index.html" if request_path in {"/", "/admin", "/reset-password"} else request_path.lstrip("/")
         candidate = (DIST / relative).resolve()
         try:
             candidate.relative_to(DIST.resolve())
