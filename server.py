@@ -138,16 +138,35 @@ def init_db() -> None:
               used_at TEXT,
               created_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS ai_usage_events (
+              id INTEGER PRIMARY KEY,
+              job_id TEXT REFERENCES plan_jobs(id) ON DELETE CASCADE,
+              provider TEXT NOT NULL,
+              model TEXT NOT NULL,
+              phase TEXT NOT NULL,
+              status TEXT NOT NULL,
+              input_tokens INTEGER NOT NULL DEFAULT 0,
+              output_tokens INTEGER NOT NULL DEFAULT 0,
+              cache_read_tokens INTEGER NOT NULL DEFAULT 0,
+              cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+              estimated_cost_usd REAL NOT NULL DEFAULT 0,
+              started_at TEXT NOT NULL,
+              finished_at TEXT,
+              error_type TEXT
+            );
             CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id);
             CREATE INDEX IF NOT EXISTS idx_plans_user_created ON plans(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_checkins_user_day ON checkins(user_id, day);
             CREATE INDEX IF NOT EXISTS idx_plan_jobs_user_created ON plan_jobs(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_started ON ai_usage_events(started_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ai_usage_job ON ai_usage_events(job_id, id);
             PRAGMA optimize;
             """
         )
         conn.execute("UPDATE plan_jobs SET status='failed',error='Serveren blev genstartet. Lav planen igen.',updated_at=? WHERE status IN ('pending','running')", (iso_now(),))
         conn.execute("DELETE FROM password_reset_tokens WHERE expires_at<?", (iso_now(),))
+        conn.execute("UPDATE ai_usage_events SET status='interrupted',finished_at=? WHERE status='running'", (iso_now(),))
 
 
 def b64hex(data: bytes) -> str:
@@ -391,27 +410,69 @@ def call_json_api(url: str, headers: dict[str, str], payload: dict[str, Any], ti
         return json.loads(response.read().decode("utf-8"))
 
 
-def opencode_text(key: str, prompt: str, max_tokens: int = 2000) -> str:
-    response = call_json_api(
-        "https://opencode.ai/zen/go/v1/messages",
-        {"x-api-key": key, "anthropic-version": "2023-06-01"},
-        {
-            "model": "qwen3.6-plus",
-            "system": "Du er en forsigtig dansk sundhedsplanlægger. Returnér kun gyldig JSON uden markdown.",
-            "messages": [{"role": "user", "content": prompt}],
-            "thinking": {"type": "disabled"},
-            "temperature": 0.2,
-            "max_tokens": max_tokens,
-        },
-        120,
+def qwen36_cost(usage: dict[str, Any]) -> float:
+    return round(
+        int(usage.get("input_tokens", 0)) * 0.50 / 1_000_000
+        + int(usage.get("output_tokens", 0)) * 3.00 / 1_000_000
+        + int(usage.get("cache_read_input_tokens", 0)) * 0.05 / 1_000_000
+        + int(usage.get("cache_creation_input_tokens", 0)) * 0.625 / 1_000_000,
+        8,
     )
+
+
+def opencode_text(key: str, prompt: str, max_tokens: int = 2000, job_id: str = "", phase: str = "OpenCode-kald") -> str:
+    event_id = None
+    if job_id:
+        with db() as conn:
+            event_id = conn.execute(
+                "INSERT INTO ai_usage_events(job_id,provider,model,phase,status,started_at) VALUES(?,?,?,?,?,?)",
+                (job_id, "opencode-go", "qwen3.6-plus", phase, "running", iso_now()),
+            ).lastrowid
+    try:
+        response = call_json_api(
+            "https://opencode.ai/zen/go/v1/messages",
+            {"x-api-key": key, "anthropic-version": "2023-06-01"},
+            {
+                "model": "qwen3.6-plus",
+                "system": "Du er en forsigtig dansk sundhedsplanlægger. Returnér kun gyldig JSON uden markdown.",
+                "messages": [{"role": "user", "content": prompt}],
+                "thinking": {"type": "disabled"},
+                "temperature": 0.2,
+                "max_tokens": max_tokens,
+            },
+            120,
+        )
+        usage = response.get("usage", {})
+        if event_id:
+            with db() as conn:
+                conn.execute(
+                    """UPDATE ai_usage_events SET status='completed',input_tokens=?,output_tokens=?,
+                       cache_read_tokens=?,cache_write_tokens=?,estimated_cost_usd=?,finished_at=? WHERE id=?""",
+                    (
+                        int(usage.get("input_tokens", 0)),
+                        int(usage.get("output_tokens", 0)),
+                        int(usage.get("cache_read_input_tokens", 0)),
+                        int(usage.get("cache_creation_input_tokens", 0)),
+                        qwen36_cost(usage),
+                        iso_now(),
+                        event_id,
+                    ),
+                )
+    except Exception as exc:
+        if event_id:
+            with db() as conn:
+                conn.execute(
+                    "UPDATE ai_usage_events SET status='failed',error_type=?,finished_at=? WHERE id=?",
+                    (type(exc).__name__[:80], iso_now(), event_id),
+                )
+        raise
     blocks = [block.get("text", "") for block in response.get("content", []) if block.get("type") == "text"]
     if not blocks:
         raise ValueError("OpenCode returnerede ingen tekst.")
     return "\n".join(blocks)
 
 
-def generate_opencode_plan(key: str, profile: dict[str, Any]) -> dict[str, Any]:
+def generate_opencode_plan(key: str, profile: dict[str, Any], job_id: str) -> dict[str, Any]:
     safe_profile = json.dumps({k: v for k, v in profile.items() if k != "consent"}, ensure_ascii=False)
     common = f"Profil (uden navn og e-mail): {safe_profile}. Brug almindelige danske råvarer, tallerkenmodellen, gradvis aktivitet og alle valgte hensyn. Ingen faste, ekstreme kure, kosttilskud eller løfter."
     day_shape = """Hver dag skal have: day (tal), name, focus, meals med breakfast/lunch/dinner/snack; hvert måltid har title, ingredients (liste) og portion. movement har type, title, minutes, intensity, instructions (liste) og alternative. Desuden habit og encouragement."""
@@ -422,7 +483,17 @@ def generate_opencode_plan(key: str, profile: dict[str, Any]) -> dict[str, Any]:
         "days_56": f"""{common}\nLav dag 5-6 (Fredag-Lørdag) som JSON {{\"days\":[...]}}. {day_shape} Variation mellem valgte motionsformer og konkrete, forskellige måltider.""",
         "day_7": f"""{common}\nLav dag 7 (Søndag) som JSON {{\"days\":[...]}}. {day_shape} Gør dagen restituerende med mulighed for let aktivitet.""",
     }
-    parts = {name: parse_json_object(opencode_text(key, prompt)) for name, prompt in prompts.items()}
+    phase_names = {
+        "overview": "Overblik og indkøbsliste",
+        "days_12": "Mandag og tirsdag",
+        "days_34": "Onsdag og torsdag",
+        "days_56": "Fredag og lørdag",
+        "day_7": "Søndag og kvalitetstjek",
+    }
+    parts = {
+        name: parse_json_object(opencode_text(key, prompt, job_id=job_id, phase=phase_names[name]))
+        for name, prompt in prompts.items()
+    }
     days = []
     for name in ("days_12", "days_34", "days_56", "day_7"):
         days.extend(parts[name].get("days", []))
@@ -433,12 +504,12 @@ def generate_opencode_plan(key: str, profile: dict[str, Any]) -> dict[str, Any]:
     return extract_json(json.dumps(overview, ensure_ascii=False), profile)
 
 
-def generate_ai_plan(profile: dict[str, Any]) -> tuple[dict[str, Any], str]:
+def generate_ai_plan(profile: dict[str, Any], job_id: str) -> tuple[dict[str, Any], str]:
     prompt = plan_prompt(profile)
     key = os.getenv("OPENCODE_GO_API_KEY", "").strip()
     if key:
         try:
-            return generate_opencode_plan(key, profile), "opencode-go/qwen3.6-plus"
+            return generate_opencode_plan(key, profile, job_id), "opencode-go/qwen3.6-plus"
         except (KeyError, ValueError, urllib.error.URLError, TimeoutError, json.JSONDecodeError) as exc:
             status = getattr(exc, "code", "")
             print(f"OpenCode generation failed: {type(exc).__name__} {status}", file=sys.stderr, flush=True)
@@ -611,7 +682,7 @@ def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: 
     try:
         with db() as conn:
             conn.execute("UPDATE plan_jobs SET status='running',updated_at=? WHERE id=?", (iso_now(), job_id))
-        plan, provider = generate_ai_plan(profile)
+        plan, provider = generate_ai_plan(profile, job_id)
         email_sent = False
         try:
             send_plan_email(recipient, name, plan)
@@ -626,6 +697,34 @@ def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: 
         print(f"Plan job failed: {type(exc).__name__}", file=sys.stderr, flush=True)
         with db() as conn:
             conn.execute("UPDATE plan_jobs SET status='failed',error=?,updated_at=? WHERE id=?", ("Planen kunne ikke laves. Prøv igen om lidt.", iso_now(), job_id))
+
+
+def ai_usage_window(conn: sqlite3.Connection, seconds: int, limit_usd: float) -> dict[str, Any]:
+    cutoff = (utc_now() - timedelta(seconds=seconds)).isoformat()
+    row = conn.execute(
+        """SELECT COUNT(*) AS calls,COALESCE(SUM(input_tokens),0) AS input_tokens,
+           COALESCE(SUM(output_tokens),0) AS output_tokens,
+           COALESCE(SUM(cache_read_tokens),0) AS cache_read_tokens,
+           COALESCE(SUM(cache_write_tokens),0) AS cache_write_tokens,
+           COALESCE(SUM(estimated_cost_usd),0) AS cost_usd,MIN(started_at) AS oldest
+           FROM ai_usage_events WHERE status='completed' AND started_at>=?""",
+        (cutoff,),
+    ).fetchone()
+    release_at = None
+    if row["oldest"]:
+        release_at = (datetime.fromisoformat(row["oldest"]) + timedelta(seconds=seconds)).isoformat()
+    cost = round(float(row["cost_usd"]), 6)
+    return {
+        "calls": int(row["calls"]),
+        "inputTokens": int(row["input_tokens"]),
+        "outputTokens": int(row["output_tokens"]),
+        "cacheReadTokens": int(row["cache_read_tokens"]),
+        "cacheWriteTokens": int(row["cache_write_tokens"]),
+        "costUsd": cost,
+        "limitUsd": limit_usd,
+        "remainingUsd": round(max(0.0, limit_usd - cost), 6),
+        "releaseAt": release_at,
+    }
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -764,7 +863,28 @@ class AppHandler(BaseHTTPRequestHandler):
                        LEFT JOIN checkins c ON c.user_id=u.id AND c.completed=1
                        GROUP BY u.id ORDER BY u.id DESC LIMIT 25"""
                 )]
-            self.json_response(200, {"counts": counts, "recentUsers": recent, "generatedAt": iso_now()})
+                active_row = conn.execute(
+                    """SELECT e.job_id,e.phase,e.started_at,
+                       (SELECT COUNT(*) FROM ai_usage_events done WHERE done.job_id=e.job_id AND done.status='completed') AS completed_calls
+                       FROM ai_usage_events e WHERE e.status='running' ORDER BY e.id DESC LIMIT 1"""
+                ).fetchone()
+                usage_events = [dict(row) for row in conn.execute(
+                    """SELECT phase,status,input_tokens,output_tokens,cache_read_tokens,
+                       estimated_cost_usd,started_at,finished_at,error_type
+                       FROM ai_usage_events ORDER BY id DESC LIMIT 20"""
+                )]
+                ai_usage = {
+                    "configured": bool(os.getenv("OPENCODE_GO_API_KEY", "").strip()),
+                    "model": "qwen3.6-plus",
+                    "active": dict(active_row) if active_row else None,
+                    "fiveHours": ai_usage_window(conn, 5 * 3600, 12.0),
+                    "week": ai_usage_window(conn, 7 * 86400, 30.0),
+                    "month": ai_usage_window(conn, 30 * 86400, 60.0),
+                    "recentEvents": usage_events,
+                    "authoritativeUrl": "https://opencode.ai/console",
+                    "scope": "Kun Fri Forms registrerede API-kald; OpenCode-console er autoritativ for hele kontoen.",
+                }
+            self.json_response(200, {"counts": counts, "recentUsers": recent, "aiUsage": ai_usage, "generatedAt": iso_now()})
             return
         if path.startswith("/api/plan/jobs/"):
             session = self.require_session()

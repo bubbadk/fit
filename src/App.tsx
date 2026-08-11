@@ -2130,12 +2130,51 @@ type AdminData = {
     plans: number;
     checkins: number;
   }[];
+  aiUsage: {
+    configured: boolean;
+    model: string;
+    active: null | {
+      job_id: string;
+      phase: string;
+      started_at: string;
+      completed_calls: number;
+    };
+    fiveHours: UsageWindow;
+    week: UsageWindow;
+    month: UsageWindow;
+    recentEvents: {
+      phase: string;
+      status: string;
+      input_tokens: number;
+      output_tokens: number;
+      cache_read_tokens: number;
+      estimated_cost_usd: number;
+      started_at: string;
+      finished_at: string | null;
+      error_type: string | null;
+    }[];
+    authoritativeUrl: string;
+    scope: string;
+  };
   generatedAt: string;
+};
+
+type UsageWindow = {
+  calls: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  costUsd: number;
+  limitUsd: number;
+  remainingUsd: number;
+  releaseAt: string | null;
 };
 
 function AdminView() {
   const [data, setData] = useState<AdminData | null>(null);
   const [error, setError] = useState("");
+  const [clock, setClock] = useState(Date.now());
   const load = () => {
     setError("");
     api("/api/admin/stats")
@@ -2148,7 +2187,15 @@ function AdminView() {
         ),
       );
   };
-  useEffect(load, []);
+  useEffect(() => {
+    load();
+    const poll = window.setInterval(load, 2000);
+    const tick = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => {
+      window.clearInterval(poll);
+      window.clearInterval(tick);
+    };
+  }, []);
   if (error) return <div className="form-error">{error}</div>;
   if (!data)
     return (
@@ -2197,6 +2244,7 @@ function AdminView() {
           </article>
         ))}
       </div>
+      <OpenCodeMeter usage={data.aiUsage} now={clock} />
       <section className="admin-users">
         <div className="section-head">
           <div>
@@ -2242,6 +2290,175 @@ function AdminView() {
         administratorens konto.
       </p>
     </>
+  );
+}
+
+function OpenCodeMeter({
+  usage,
+  now,
+}: {
+  usage: AdminData["aiUsage"];
+  now: number;
+}) {
+  const windows: [string, UsageWindow, string][] = [
+    ["5 timer", usage.fiveHours, "Go-grænse $12"],
+    ["7 dage", usage.week, "Go-grænse $30"],
+    ["30 dage", usage.month, "Go-grænse $60"],
+  ];
+  const activeSeconds = usage.active
+    ? Math.max(
+        0,
+        Math.floor((now - new Date(usage.active.started_at).getTime()) / 1000),
+      )
+    : 0;
+  return (
+    <section className="ai-meter">
+      <div className="ai-meter-head">
+        <div>
+          <p className="eyebrow">OPENCODE GO · LIVE</p>
+          <h2>AI-forbrug og arbejde</h2>
+          <p>{usage.scope}</p>
+        </div>
+        <div className={`ai-live ${usage.active ? "working" : ""}`}>
+          <i />
+          <span>
+            <b>
+              {usage.active
+                ? "Arbejder nu"
+                : usage.configured
+                  ? "Klar"
+                  : "Ikke konfigureret"}
+            </b>
+            <small>{usage.model}</small>
+          </span>
+        </div>
+      </div>
+      {usage.active && (
+        <div className="ai-active-job">
+          <div className="ai-orb">
+            <span />
+          </div>
+          <div>
+            <small>AKTUEL FASE · {usage.active.completed_calls + 1} AF 5</small>
+            <h3>{usage.active.phase}</h3>
+            <p>
+              OpenCode har arbejdet i {formatDuration(activeSeconds)}. Tallene
+              opdateres automatisk.
+            </p>
+          </div>
+          <b>{Math.min(100, (usage.active.completed_calls / 5) * 100)}%</b>
+        </div>
+      )}
+      <div className="usage-windows">
+        {windows.map(([label, item, note]) => {
+          const percent = Math.min(
+            100,
+            item.limitUsd ? (item.costUsd / item.limitUsd) * 100 : 0,
+          );
+          return (
+            <article key={label}>
+              <div>
+                <span>{label}</span>
+                <small>{note}</small>
+              </div>
+              <strong>
+                {formatUsd(item.costUsd)} <em>/ {formatUsd(item.limitUsd)}</em>
+              </strong>
+              <div className="usage-bar">
+                <i style={{ width: `${percent}%` }} />
+              </div>
+              <p>
+                <b>{formatUsd(item.remainingUsd)}</b> tilbage · {item.calls}{" "}
+                kald
+              </p>
+              <time>
+                {item.releaseAt
+                  ? `Næste forbrug frigives om ${countdown(item.releaseAt, now)}`
+                  : "Perioden starter ved første kald"}
+              </time>
+            </article>
+          );
+        })}
+      </div>
+      <div className="ai-usage-bottom">
+        <div>
+          <p className="eyebrow">SENESTE AI-KALD</p>
+          <div className="ai-event-list">
+            {usage.recentEvents.length ? (
+              usage.recentEvents.slice(0, 8).map((event, index) => (
+                <article key={`${event.started_at}-${index}`}>
+                  <i className={event.status} />
+                  <span>
+                    <b>{event.phase}</b>
+                    <small>
+                      {event.input_tokens.toLocaleString("da-DK")} ind ·{" "}
+                      {event.output_tokens.toLocaleString("da-DK")} ud
+                    </small>
+                  </span>
+                  <span>
+                    <b>{formatUsd(event.estimated_cost_usd)}</b>
+                    <small>
+                      {event.finished_at
+                        ? formatDuration(
+                            Math.max(
+                              0,
+                              Math.round(
+                                (new Date(event.finished_at).getTime() -
+                                  new Date(event.started_at).getTime()) /
+                                  1000,
+                              ),
+                            ),
+                          )
+                        : "live"}
+                    </small>
+                  </span>
+                </article>
+              ))
+            ) : (
+              <p className="empty-events">
+                Første registrering kommer, næste gang Fri Form laver en plan.
+              </p>
+            )}
+          </div>
+        </div>
+        <aside>
+          <b>Hele OpenCode-kontoen</b>
+          <p>
+            OpenCode sender ikke kontoens samlede forbrug eller præcise
+            reset-tider med API-svarene.
+          </p>
+          <a href={usage.authoritativeUrl} target="_blank" rel="noreferrer">
+            Åbn den autoritative OpenCode-console ↗
+          </a>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function formatUsd(value: number) {
+  return new Intl.NumberFormat("da-DK", {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: value < 0.01 ? 4 : 2,
+    maximumFractionDigits: value < 0.01 ? 4 : 2,
+  }).format(value);
+}
+
+function formatDuration(totalSeconds: number) {
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  return hours
+    ? `${hours}t ${minutes}m ${seconds}s`
+    : minutes
+      ? `${minutes}m ${seconds}s`
+      : `${seconds}s`;
+}
+
+function countdown(value: string, now: number) {
+  return formatDuration(
+    Math.max(0, Math.ceil((new Date(value).getTime() - now) / 1000)),
   );
 }
 
