@@ -49,6 +49,7 @@ load_env(ROOT / ".env")
 
 PORT = int(os.getenv("PORT", "8963"))
 DB_PATH = Path(os.getenv("FRIFORM_DB_PATH", str(ROOT / "data" / "friform.db")))
+ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "reinodybbol@gmail.com").strip().lower()
 SESSION_DAYS = 30
 COOKIE_NAME = "friform_session"
 ALLOWED_ORIGINS = {
@@ -673,12 +674,46 @@ class AppHandler(BaseHTTPRequestHandler):
                 checkins = [dict(row) for row in conn.execute("SELECT day,item_id,completed,weight,mood,updated_at FROM checkins WHERE user_id=? ORDER BY day", (session["user_id"],))]
             self.json_response(200, {
                 "authenticated": True,
-                "user": {"email": session["email"], "name": session["name"]},
+                "user": {"email": session["email"], "name": session["name"], "isAdmin": session["email"].lower() == ADMIN_EMAIL},
                 "csrf": session["csrf_token"],
                 "profile": json.loads(profile_row["data_json"]) if profile_row else None,
                 "latestPlan": plan,
                 "checkins": checkins,
             })
+            return
+        if path == "/api/admin/stats":
+            session = self.require_session()
+            if not session:
+                return
+            if session["email"].lower() != ADMIN_EMAIL:
+                self.json_response(HTTPStatus.FORBIDDEN, {"error": "Kun administratoren har adgang."})
+                return
+            week_ago = (utc_now() - timedelta(days=7)).isoformat()
+            month_ago = (utc_now() - timedelta(days=30)).isoformat()
+            today = utc_now().date().isoformat()
+            with db() as conn:
+                counts = {
+                    "users": conn.execute("SELECT COUNT(*) FROM users").fetchone()[0],
+                    "newToday": conn.execute("SELECT COUNT(*) FROM users WHERE substr(created_at,1,10)=?", (today,)).fetchone()[0],
+                    "new7Days": conn.execute("SELECT COUNT(*) FROM users WHERE created_at>=?", (week_ago,)).fetchone()[0],
+                    "active7Days": conn.execute("SELECT COUNT(DISTINCT user_id) FROM sessions WHERE created_at>=?", (week_ago,)).fetchone()[0],
+                    "active30Days": conn.execute("SELECT COUNT(DISTINCT user_id) FROM sessions WHERE created_at>=?", (month_ago,)).fetchone()[0],
+                    "profiles": conn.execute("SELECT COUNT(*) FROM profiles").fetchone()[0],
+                    "plans": conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0],
+                    "emailsSent": conn.execute("SELECT COUNT(*) FROM plans WHERE emailed_at IS NOT NULL").fetchone()[0],
+                    "completedSteps": conn.execute("SELECT COUNT(*) FROM checkins WHERE completed=1").fetchone()[0],
+                    "failedJobs": conn.execute("SELECT COUNT(*) FROM plan_jobs WHERE status='failed'").fetchone()[0],
+                }
+                recent = [dict(row) for row in conn.execute(
+                    """SELECT u.email,u.name,u.created_at,u.last_login_at,
+                       COUNT(DISTINCT p.id) AS plans,
+                       COUNT(DISTINCT c.day || ':' || c.item_id) AS checkins
+                       FROM users u
+                       LEFT JOIN plans p ON p.user_id=u.id
+                       LEFT JOIN checkins c ON c.user_id=u.id AND c.completed=1
+                       GROUP BY u.id ORDER BY u.id DESC LIMIT 25"""
+                )]
+            self.json_response(200, {"counts": counts, "recentUsers": recent, "generatedAt": iso_now()})
             return
         if path.startswith("/api/plan/jobs/"):
             session = self.require_session()
@@ -716,7 +751,7 @@ class AppHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/"):
             self.send_error(404)
             return
-        relative = path.lstrip("/") or "index.html"
+        relative = "index.html" if path in {"/", "/admin"} else path.lstrip("/")
         candidate = (DIST / relative).resolve()
         try:
             candidate.relative_to(DIST.resolve())
@@ -756,7 +791,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     self.json_response(409, {"error": "Der findes allerede en konto med denne e-mail."})
                     return
                 cookie = f"{COOKIE_NAME}={raw}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax"
-                self.json_response(201, {"ok": True, "csrf": csrf, "user": {"email": email, "name": name}}, {"Set-Cookie": cookie})
+                self.json_response(201, {"ok": True, "csrf": csrf, "user": {"email": email, "name": name, "isAdmin": email == ADMIN_EMAIL}}, {"Set-Cookie": cookie})
                 return
 
             if path == "/api/auth/login":
@@ -773,7 +808,7 @@ class AppHandler(BaseHTTPRequestHandler):
                     raw, csrf = make_session(conn, user["id"])
                     conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (iso_now(), user["id"]))
                 cookie = f"{COOKIE_NAME}={raw}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax"
-                self.json_response(200, {"ok": True, "csrf": csrf, "user": {"email": user["email"], "name": user["name"]}}, {"Set-Cookie": cookie})
+                self.json_response(200, {"ok": True, "csrf": csrf, "user": {"email": user["email"], "name": user["name"], "isAdmin": user["email"].lower() == ADMIN_EMAIL}}, {"Set-Cookie": cookie})
                 return
 
             if path == "/api/auth/logout":
@@ -866,7 +901,7 @@ class AppHandler(BaseHTTPRequestHandler):
         self.json_response(200, {"ok": True}, {"Set-Cookie": f"{COOKIE_NAME}=; Path=/; Max-Age=0; HttpOnly; Secure; SameSite=Lax"})
 
     def serve_static(self, request_path: str) -> None:
-        relative = request_path.lstrip("/") or "index.html"
+        relative = "index.html" if request_path in {"/", "/admin"} else request_path.lstrip("/")
         candidate = (DIST / relative).resolve()
         try:
             candidate.relative_to(DIST.resolve())
