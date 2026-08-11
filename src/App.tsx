@@ -137,6 +137,9 @@ export default function App() {
   const [provider, setProvider] = useState("");
   const [checkins, setCheckins] = useState<Checkin[]>([]);
   const [authOpen, setAuthOpen] = useState(false);
+  const [queuedEmail, setQueuedEmail] = useState(
+    () => sessionStorage.getItem("friform-plan-queued") || "",
+  );
 
   const refresh = async () => {
     try {
@@ -148,6 +151,8 @@ export default function App() {
         if (data.latestPlan) {
           setPlan(data.latestPlan.plan);
           setProvider(data.latestPlan.provider);
+          sessionStorage.removeItem("friform-plan-queued");
+          setQueuedEmail("");
         }
         setCheckins(data.checkins || []);
       }
@@ -183,6 +188,17 @@ export default function App() {
     return <AdminDenied onLogout={() => logout(csrf, setUser)} />;
   if (adminPath && user.isAdmin)
     return <AdminPortal user={user} onLogout={() => logout(csrf, setUser)} />;
+  if (!plan && queuedEmail)
+    return (
+      <PlanQueued
+        email={queuedEmail}
+        onLogout={() => {
+          sessionStorage.removeItem("friform-plan-queued");
+          setQueuedEmail("");
+          logout(csrf, setUser);
+        }}
+      />
+    );
   if (!plan)
     return (
       <Onboarding
@@ -190,9 +206,9 @@ export default function App() {
         csrf={csrf}
         profile={profile}
         setProfile={setProfile}
-        onPlan={(value, source) => {
-          setPlan(value);
-          setProvider(source);
+        onQueued={(email) => {
+          sessionStorage.setItem("friform-plan-queued", email);
+          setQueuedEmail(email);
         }}
         onLogout={() => logout(csrf, setUser)}
       />
@@ -648,14 +664,14 @@ function Onboarding({
   csrf,
   profile,
   setProfile,
-  onPlan,
+  onQueued,
   onLogout,
 }: {
   user: User;
   csrf: string;
   profile: Profile;
   setProfile: (p: Profile) => void;
-  onPlan: (p: Plan, provider: string) => void;
+  onQueued: (email: string) => void;
   onLogout: () => void;
 }) {
   const [step, setStep] = useState(0);
@@ -672,24 +688,8 @@ function Onboarding({
         { method: "POST", body: JSON.stringify({ profile }) },
         csrf,
       );
-      for (let attempt = 0; attempt < 100; attempt += 1) {
-        await new Promise((resolve) => window.setTimeout(resolve, 3000));
-        const job = await api(`/api/plan/jobs/${data.job_id}`);
-        if (job.status === "done" && job.plan) {
-          if (!job.email_sent)
-            sessionStorage.setItem(
-              "friform-email-warning",
-              "Planen er gemt, men e-mailen kunne ikke sendes lige nu.",
-            );
-          onPlan(job.plan, job.provider);
-          return;
-        }
-        if (job.status === "failed")
-          throw new Error(job.error || "Planen kunne ikke laves.");
-      }
-      throw new Error(
-        "Planen tager længere end forventet. Log ind igen om lidt — jobbet fortsætter på serveren.",
-      );
+      if (!data.job_id) throw new Error("Planjobbet kunne ikke startes.");
+      onQueued(user.email);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Planen kunne ikke laves.");
       setBusy(false);
@@ -1004,16 +1004,10 @@ function Onboarding({
                 </p>
               )}
               {busy && (
-                <div className="generating">
+                <p className="generating">
                   <span className="loader" />
-                  <div>
-                    <b>Din uge bliver skrevet…</b>
-                    <small>
-                      AI’en samler mad, aktiviteter og alternativer. Det tager
-                      normalt 30–120 sekunder.
-                    </small>
-                  </div>
-                </div>
+                  <b>Starter planlægningen…</b>
+                </p>
               )}
             </>
           )}
@@ -1038,6 +1032,44 @@ function Onboarding({
           </div>
         </section>
       </div>
+    </main>
+  );
+}
+
+function PlanQueued({
+  email,
+  onLogout,
+}: {
+  email: string;
+  onLogout: () => void;
+}) {
+  return (
+    <main className="queued-page">
+      <section className="queued-card">
+        <Brand />
+        <div className="queued-icon">✓</div>
+        <p className="eyebrow">VI ER I GANG</p>
+        <h1>Du kan roligt lukke vinduet.</h1>
+        <p className="queued-lead">
+          Din personlige plan bliver nu lavet som et baggrundsjob. Du behøver
+          ikke vente her eller holde siden åben.
+        </p>
+        <div className="queued-mail">
+          <span>Planen sendes til</span>
+          <b>{email}</b>
+        </div>
+        <h2>Når mailen er kommet, kan du logge ind.</h2>
+        <p>
+          Mailen indeholder et link til din færdige plan. Det tager normalt et
+          par minutter. Kig eventuelt i spam, hvis du ikke kan se den.
+        </p>
+        <button className="primary large" onClick={onLogout}>
+          Log ud og gå til forsiden
+        </button>
+        <small>
+          Du må også bare lukke denne fane — arbejdet fortsætter på serveren.
+        </small>
+      </section>
     </main>
   );
 }
@@ -1426,7 +1458,8 @@ function WeekView({ plan }: { plan: Plan }) {
       </div>
       <div className="week-grid">
         {plan.days.map((day, index) => {
-        const kind = `${day.movement.type} ${day.movement.title}`.toLowerCase();
+          const kind =
+            `${day.movement.type} ${day.movement.title}`.toLowerCase();
           return (
             <article className={open === index ? "open" : ""} key={day.day}>
               <button onClick={() => setOpen(open === index ? -1 : index)}>

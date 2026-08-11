@@ -513,7 +513,7 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
     if not user or not password:
         raise RuntimeError("Gmail SMTP er ikke konfigureret.")
     message = EmailMessage()
-    message["Subject"] = "Din personlige Fri Form-plan"
+    message["Subject"] = "Din Fri Form-plan er klar"
     message["From"] = f"Fri Form <{user}>"
     message["To"] = recipient
     text_days = []
@@ -545,7 +545,7 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
         <p>Hej {html.escape(name)},</p><p>{html.escape(str(plan['intro']))}</p>
         {''.join(html_days)}
         <p style="padding:16px;background:#edf5ef;border-radius:12px"><b>Vigtigt:</b> {html.escape(str(plan['medicalReminder']))}</p>
-        <p><a href="https://fit.dybbol.com/" style="display:inline-block;background:#e56f3d;color:white;padding:12px 18px;border-radius:999px;text-decoration:none;font-weight:bold">Åbn min daglige plan</a></p>
+        <p><a href="https://fit.dybbol.com/" style="display:inline-block;background:#e56f3d;color:white;padding:12px 18px;border-radius:999px;text-decoration:none;font-weight:bold">Log ind og se min plan</a></p>
       </div>
     </div>"""
     message.set_content(plain)
