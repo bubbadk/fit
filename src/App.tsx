@@ -394,11 +394,11 @@ function Landing({
         </div>
         <div>
           <b>20</b>
-          <span>øvelsesvarianter</span>
+          <span>forskellige øvelser</span>
         </div>
         <div>
-          <b>10</b>
-          <span>rigtige videoguider</span>
+          <b>20</b>
+          <span>forskellige videoguider</span>
         </div>
         <div>
           <b>0 kr.</b>
@@ -2561,6 +2561,36 @@ const exerciseVideos: Record<string, ExerciseVideo> = {
   },
   biceps: {
     src: "/exercises/biceps-curl.mp4", poster: "/exercises/biceps-curl.webp", title: "Armbøjning med vægt", credit: "MART PRODUCTION · Pexels", source: "https://www.pexels.com/video/a-woman-doing-bicep-curls-at-home-8837117/",
+  },
+  "bodyweight-squat": {
+    src: "/exercises/bodyweight-squat.mp4", poster: "/exercises/bodyweight-squat.webp", title: "Bred squat", credit: "Ketut Subiyanto · Pexels", source: "https://www.pexels.com/video/woman-doing-squat-exercise-5034577/",
+  },
+  "incline-pushup": {
+    src: "/exercises/incline-pushup.mp4", poster: "/exercises/incline-pushup.webp", title: "Armbøjning mod bord", credit: "Mikhail Nilov · Pexels", source: "https://www.pexels.com/video/a-man-doing-incline-push-ups-6970145/",
+  },
+  "seated-band-row": {
+    src: "/exercises/seated-band-row.mp4", poster: "/exercises/seated-band-row.webp", title: "Siddende træk med elastik", credit: "Kampus Production · Pexels", source: "https://www.pexels.com/video/man-doing-seated-row-exercise-6022753/",
+  },
+  "side-plank": {
+    src: "/exercises/side-plank.mp4", poster: "/exercises/side-plank.webp", title: "Sideplanke", credit: "Kampus Production · Pexels", source: "https://www.pexels.com/video/a-man-doing-a-side-plank-6023266/",
+  },
+  "reverse-lunge": {
+    src: "/exercises/reverse-lunge.mp4", poster: "/exercises/reverse-lunge.webp", title: "Baglæns udfald", credit: "ROMAN ODINTSOV · Pexels", source: "https://www.pexels.com/video/woman-doing-lunges-exercise-8233047/",
+  },
+  "sit-up": {
+    src: "/exercises/sit-up.mp4", poster: "/exercises/sit-up.webp", title: "Kontrolleret mavebøjning", credit: "Jill Burrow · Pexels", source: "https://www.pexels.com/video/woman-doing-sit-ups-8893527/",
+  },
+  "lateral-leg-raise": {
+    src: "/exercises/lateral-leg-raise.mp4", poster: "/exercises/lateral-leg-raise.webp", title: "Sidebenløft", credit: "SHVETS production · Pexels", source: "https://www.pexels.com/video/a-woman-doing-a-lateral-leg-raise-exercise-6974513/",
+  },
+  "lateral-raise": {
+    src: "/exercises/lateral-raise.mp4", poster: "/exercises/lateral-raise.webp", title: "Sideløft med håndvægte", credit: "Tima Miroshnichenko · Pexels", source: "https://www.pexels.com/video/a-man-working-out-using-dumbbell-5319088/",
+  },
+  "triceps-extension": {
+    src: "/exercises/triceps-extension.mp4", poster: "/exercises/triceps-extension.webp", title: "Tricepsstræk over hovedet", credit: "Pavel Danilyuk · Pexels", source: "https://www.pexels.com/video/a-man-working-out-6296281/",
+  },
+  "jumping-jack": {
+    src: "/exercises/jumping-jack.mp4", poster: "/exercises/jumping-jack.webp", title: "Sprællemand", credit: "RDNE Stock project · Pexels", source: "https://www.pexels.com/video/women-doing-jumping-jacks-8402086/",
   },
 };
 

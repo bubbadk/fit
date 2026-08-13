@@ -1,5 +1,6 @@
 import unittest
 import json
+import hashlib
 from pathlib import Path
 
 from program_content import (
@@ -27,13 +28,34 @@ class ProgramContentTests(unittest.TestCase):
         }
 
     def test_catalogue_has_stable_media_for_every_exercise(self):
-        self.assertGreaterEqual(len(EXERCISES), 20)
+        self.assertEqual(len(EXERCISES), 20)
+        self.assertEqual(len(VIDEO_CREDITS), 20)
         media_dir = Path(__file__).resolve().parents[1] / "public" / "exercises"
+        video_keys = []
+        video_paths = []
+        poster_paths = []
+        source_pages = []
+        video_hashes = []
         for exercise in EXERCISES.values():
             self.assertIn(exercise["videoKey"], VIDEO_CREDITS)
             video = VIDEO_CREDITS[exercise["videoKey"]]
-            self.assertTrue((media_dir / Path(video["src"]).name).is_file())
-            self.assertTrue((media_dir / Path(video["poster"]).name).is_file())
+            video_path = media_dir / Path(video["src"]).name
+            poster_path = media_dir / Path(video["poster"]).name
+            self.assertTrue(video_path.is_file())
+            self.assertTrue(poster_path.is_file())
+            video_keys.append(exercise["videoKey"])
+            video_paths.append(video["src"])
+            poster_paths.append(video["poster"])
+            source_pages.append(video["source"])
+            video_hashes.append(hashlib.sha256(video_path.read_bytes()).hexdigest())
+
+        # One exercise means one demonstration. Reused keys, source clips or
+        # files must fail before they can recreate the duplicated-video bug.
+        self.assertEqual(len(video_keys), len(set(video_keys)))
+        self.assertEqual(len(video_paths), len(set(video_paths)))
+        self.assertEqual(len(poster_paths), len(set(poster_paths)))
+        self.assertEqual(len(source_pages), len(set(source_pages)))
+        self.assertEqual(len(video_hashes), len(set(video_hashes)))
 
     def test_program_is_real_multiweek_progression(self):
         week_one = apply_program_structure(self.plan, self.profile, 1, total_weeks(180))
