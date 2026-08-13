@@ -8,7 +8,13 @@ type User = {
   programStartedAt?: string | null;
   programEndsAt?: string | null;
 };
-type Meal = { title: string; ingredients?: string[]; portion?: string };
+type Meal = {
+  title: string;
+  ingredients?: string[];
+  portion?: string;
+  method?: string[];
+  prepMinutes?: number;
+};
 type PlanDay = {
   day: number;
   name: string;
@@ -21,9 +27,25 @@ type PlanDay = {
     intensity: string;
     instructions: string[];
     alternative: string;
+    workoutId?: string;
   };
   habit: string;
   encouragement: string;
+};
+type ExerciseGuide = {
+  id?: string;
+  exercise: string;
+  videoKey?: string;
+  pattern?: string;
+  muscleGroups?: string[];
+  equipment?: string;
+  sets: string;
+  reps: string;
+  how: string;
+  cues?: string[];
+  easier: string;
+  harder?: string;
+  caution?: string;
 };
 type Plan = {
   title: string;
@@ -33,13 +55,29 @@ type Plan = {
   waterTip: string;
   sleepTip: string;
   days: PlanDay[];
-  strengthGuide: {
-    exercise: string;
-    sets: string;
-    reps: string;
-    how: string;
-    easier: string;
+  strengthGuide: ExerciseGuide[];
+  exerciseLibrary?: ExerciseGuide[];
+  strengthWorkouts?: {
+    id: string;
+    title: string;
+    exerciseIds: string[];
+    rounds: number;
+    restSeconds: number;
   }[];
+  program?: {
+    currentWeek: number;
+    totalWeeks: number;
+    phase: string;
+    phaseText: string;
+    progression: string;
+  };
+  dailyLessons?: { day: number; title: string; text: string }[];
+  weeklyTargets?: {
+    strengthSessions: number;
+    walkMinutes: number;
+    swimSessions: number;
+    recoveryDays: number;
+  };
   swimGuide: { part: string; minutes: number; how: string }[];
   shoppingList: Record<string, string[]>;
   checkInQuestions: string[];
@@ -64,6 +102,11 @@ type Profile = {
   heart: boolean;
   pregnant: boolean;
   eatingDisorder: boolean;
+  uncontrolledBloodPressure: boolean;
+  recentSurgery: boolean;
+  mobility: "independent" | "support" | "limited";
+  medication: string;
+  painAreas: string;
   allergies: string;
   dislikes: string;
   cookingMinutes: number;
@@ -76,7 +119,7 @@ type Checkin = {
   weight?: number;
   mood?: number;
 };
-type Tab = "today" | "week" | "food" | "training" | "progress" | "admin";
+type Tab = "today" | "week" | "food" | "training" | "coach" | "progress" | "admin";
 
 const initialProfile: Profile = {
   age: 45,
@@ -97,6 +140,11 @@ const initialProfile: Profile = {
   heart: false,
   pregnant: false,
   eatingDisorder: false,
+  uncontrolledBloodPressure: false,
+  recentSurgery: false,
+  mobility: "independent",
+  medication: "",
+  painAreas: "",
   allergies: "",
   dislikes: "",
   cookingMinutes: 30,
@@ -236,6 +284,7 @@ export default function App() {
       profile={profile}
       checkins={checkins}
       setCheckins={setCheckins}
+      setPlan={setPlan}
       setProfile={setProfile}
       onQueued={(email) => {
         sessionStorage.setItem("friform-plan-queued", email);
@@ -289,9 +338,9 @@ function Landing({
             <em>der passer til dit liv.</em>
           </h1>
           <p className="lead">
-            Få en grundig ugeplan med almindelig mad, gåture, svømning og
-            styrketræning. Din plan husker din fremgang og møder dig igen i
-            morgen.
+            Få et personligt forløb uge for uge med almindelig mad, gåture,
+            svømning og styrketræning. Planen tilpasser sig din fremgang og
+            møder dig igen i morgen.
           </p>
           <div className="hero-actions">
             <button className="primary large" onClick={onStart}>
@@ -340,16 +389,16 @@ function Landing({
       </section>
       <section className="metric-strip">
         <div>
-          <b>7</b>
-          <span>detaljerede dage</span>
+          <b>1–26</b>
+          <span>uger i dit forløb</span>
         </div>
         <div>
-          <b>4</b>
-          <span>daglige måltidsforslag</span>
+          <b>20</b>
+          <span>øvelsesvarianter</span>
         </div>
         <div>
-          <b>3</b>
-          <span>måder at bevæge sig</span>
+          <b>10</b>
+          <span>rigtige videoguider</span>
         </div>
         <div>
           <b>0 kr.</b>
@@ -371,13 +420,13 @@ function Landing({
           />
           <Feature
             n="02"
-            title="AI bygger din uge"
-            text="En klog model samler kost, gåture, svømning og styrke i én sammenhængende dansk plan."
+            title="AI bygger dit forløb"
+            text="En klog model samler kost, gåture, svømning og styrke i en dansk plan, der udvikler sig uge for uge."
           />
           <Feature
             n="03"
-            title="Følg ét døgn ad gangen"
-            text="Sæt flueben, se din uge og få planen på mail. Du kan altid justere og begynde igen."
+            title="Tilpas efter virkeligheden"
+            text="Sæt flueben, lav ugens check-in og få næste tilpassede uge på mail. AI-coachen hjælper, når noget driller."
           />
         </div>
       </section>
@@ -390,9 +439,9 @@ function Landing({
             samlet ét sted.
           </h2>
           <p>
-            Hver dag indeholder konkrete måltider, portionsgreb, bevægelse med
-            alternativer og en lille vane. Ugen samles med indkøbsliste,
-            styrkeguide og svømmeprogram.
+            Hver dag indeholder opskrifter, portionsgreb, bevægelse med
+            alternativer og en lille vane. Du får indkøbsliste, måltidsbytte,
+            videoguider, svømmeprogram, fremgang og en personlig AI-coach.
           </p>
           <button className="primary" onClick={onStart}>
             Opret gratis konto
@@ -1166,6 +1215,16 @@ function Onboarding({
                   ["mix", "En blanding"],
                 ]}
               />
+              <Choice
+                label="Hvordan bevæger du dig i hverdagen?"
+                value={profile.mobility}
+                onChange={(v) => update("mobility", v as Profile["mobility"])}
+                options={[
+                  ["independent", "Uden støtte"],
+                  ["support", "Jeg bruger af og til støtte"],
+                  ["limited", "Jeg har tydelige begrænsninger"],
+                ]}
+              />
               <div className="considerations">
                 <p>Skal planen tage hensyn?</p>
                 <label>
@@ -1248,6 +1307,18 @@ function Onboarding({
                     </small>
                   </span>
                 </label>
+                <label>
+                  <input type="checkbox" checked={profile.uncontrolledBloodPressure} onChange={(e) => update("uncontrolledBloodPressure", e.target.checked)} />
+                  <span><b>Uafklaret eller meget højt blodtryk</b><small>Vi stopper planlægningen, indtil det er afklaret med læge.</small></span>
+                </label>
+                <label>
+                  <input type="checkbox" checked={profile.recentSurgery} onChange={(e) => update("recentSurgery", e.target.checked)} />
+                  <span><b>Nylig operation eller genoptræningsforløb</b><small>Aktivitet skal først afstemmes med den fagperson, der følger dig.</small></span>
+                </label>
+              </div>
+              <div className="field-grid health-notes">
+                <label className="text-field"><span>Medicin, der kan påvirke kost eller aktivitet</span><input value={profile.medication} onChange={(e) => update("medication", e.target.value)} placeholder="Valgfrit – skriv ikke doser eller CPR" /></label>
+                <label className="text-field"><span>Andre smerter eller bevægelseshensyn</span><input value={profile.painAreas} onChange={(e) => update("painAreas", e.target.value)} placeholder="Fx skulder eller hofte" /></label>
               </div>
               <label className="consent">
                 <input
@@ -1440,6 +1511,7 @@ function Dashboard({
   profile,
   checkins,
   setCheckins,
+  setPlan,
   setProfile,
   onQueued,
   onLogout,
@@ -1451,6 +1523,7 @@ function Dashboard({
   profile: Profile;
   checkins: Checkin[];
   setCheckins: (c: Checkin[]) => void;
+  setPlan: (plan: Plan | null) => void;
   setProfile: (profile: Profile) => void;
   onQueued: (email: string) => void;
   onLogout: () => void;
@@ -1461,6 +1534,7 @@ function Dashboard({
   );
   const [emailBusy, setEmailBusy] = useState(false);
   const [updateOpen, setUpdateOpen] = useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const index = (new Date().getDay() + 6) % 7;
   const day = plan.days[index] || plan.days[0];
   const key = todayKey();
@@ -1507,6 +1581,7 @@ function Dashboard({
     ["week", "Ugen", "▦"],
     ["food", "Mad", "◒"],
     ["training", "Træning", "↗"],
+    ["coach", "Coach", "✦"],
     ["progress", "Fremgang", "◎"],
   ];
   if (user.isAdmin) nav.push(["admin", "Admin", "⚙"]);
@@ -1561,17 +1636,32 @@ function Dashboard({
               <button onClick={() => setNotice("")}>×</button>
             </div>
           )}
+          {plan.program && (
+            <section className="program-ribbon">
+              <div>
+                <span>UGE {plan.program.currentWeek} AF {plan.program.totalWeeks}</span>
+                <b>{plan.program.phase}</b>
+                <small>{plan.program.phaseText}</small>
+              </div>
+              <i><b style={{ width: `${Math.round((plan.program.currentWeek / plan.program.totalWeeks) * 100)}%` }} /></i>
+              {plan.program.currentWeek < plan.program.totalWeeks && (
+                <button className="secondary" onClick={() => setReviewOpen(true)}>Afslut ugen og tilpas næste →</button>
+              )}
+            </section>
+          )}
           {tab === "today" && (
             <TodayView
               day={day}
               completed={completed}
               toggle={toggle}
               onOpen={(next) => setTab(next)}
+              lesson={plan.dailyLessons?.find((item) => item.day === day.day)}
             />
           )}
           {tab === "week" && <WeekView plan={plan} />}
-          {tab === "food" && <FoodView plan={plan} />}
+          {tab === "food" && <FoodView plan={plan} csrf={csrf} setPlan={setPlan} />}
           {tab === "training" && <TrainingView plan={plan} />}
+          {tab === "coach" && <CoachView csrf={csrf} />}
           {tab === "progress" && (
             <ProgressView
               plan={plan}
@@ -1582,6 +1672,7 @@ function Dashboard({
               resend={resend}
               emailBusy={emailBusy}
               provider={provider}
+              onNextWeek={() => setReviewOpen(true)}
             />
           )}
           {tab === "admin" && user.isAdmin && <AdminView />}
@@ -1612,6 +1703,19 @@ function Dashboard({
           }}
         />
       )}
+      {reviewOpen && plan.program && (
+        <NextWeekModal
+          csrf={csrf}
+          email={user.email}
+          profile={profile}
+          week={plan.program.currentWeek}
+          onClose={() => setReviewOpen(false)}
+          onQueued={() => {
+            setReviewOpen(false);
+            onQueued(user.email);
+          }}
+        />
+      )}
     </main>
   );
 }
@@ -1626,6 +1730,75 @@ function programLabel(days: number) {
         : days === 180
           ? "6 måneder"
           : `${days} dage`;
+}
+
+function NextWeekModal({
+  csrf,
+  email,
+  profile,
+  week,
+  onClose,
+  onQueued,
+}: {
+  csrf: string;
+  email: string;
+  profile: Profile;
+  week: number;
+  onClose: () => void;
+  onQueued: () => void;
+}) {
+  const [weight, setWeight] = useState(profile.weight);
+  const [energy, setEnergy] = useState(3);
+  const [difficulty, setDifficulty] = useState(3);
+  const [pain, setPain] = useState(0);
+  const [win, setWin] = useState("");
+  const [challenge, setChallenge] = useState("");
+  const [nextFocus, setNextFocus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api(
+        "/api/program/next-week",
+        { method: "POST", body: JSON.stringify({ weight, energy, difficulty, pain, win, challenge, nextFocus }) },
+        csrf,
+      );
+      if (!result.job_id) throw new Error("Næste uge kunne ikke startes.");
+      onQueued();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Ugechecket kunne ikke gemmes.");
+      setBusy(false);
+    }
+  };
+  const Scale = ({ label, value, setValue, from = 1 }: { label: string; value: number; setValue: (value: number) => void; from?: number }) => (
+    <label className="review-scale"><b>{label}</b><span>{Array.from({ length: 6 - from }, (_, index) => index + from).map((number) => <button type="button" className={value === number ? "active" : ""} onClick={() => setValue(number)} key={number}>{number}</button>)}</span></label>
+  );
+  return (
+    <div className="modal-backdrop review-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !busy && onClose()}>
+      <section className="weekly-review-modal" role="dialog" aria-modal="true" aria-labelledby="review-title">
+        <button className="modal-close" onClick={onClose} disabled={busy} aria-label="Luk">×</button>
+        <p className="eyebrow">UGE {week} · ÆRLIGT, IKKE PERFEKT</p>
+        <h2 id="review-title">Lad næste uge passe bedre.</h2>
+        <p>Din check-in gemmes og bruges til at tilpasse næste uge. Den nye plan fortsætter i baggrunden og sendes til {email}.</p>
+        <form onSubmit={submit}>
+          <NumberField label="Vægt – valgfri" value={weight} min={40} max={300} unit="kg" onChange={setWeight} />
+          <div className="review-scales">
+            <Scale label="Energi" value={energy} setValue={setEnergy} />
+            <Scale label="Sværhedsgrad" value={difficulty} setValue={setDifficulty} />
+            <Scale label="Smerter under/efter aktivitet" value={pain} setValue={setPain} from={0} />
+          </div>
+          <label className="text-field">Hvad virkede godt?<textarea rows={2} value={win} onChange={(event) => setWin(event.target.value)} placeholder="Fx de korte gåture var nemme at få gjort" /></label>
+          <label className="text-field">Hvad var svært?<textarea rows={2} value={challenge} onChange={(event) => setChallenge(event.target.value)} placeholder="Fx aftensmaden tog for lang tid" /></label>
+          <label className="text-field">Noget du ønsker mere eller mindre af?<textarea rows={2} value={nextFocus} onChange={(event) => setNextFocus(event.target.value)} /></label>
+          {error && <p className="form-error" role="alert">{error}</p>}
+          <div className="update-actions"><button type="button" className="secondary" onClick={onClose} disabled={busy}>Ikke nu</button><button className="primary" disabled={busy || !win.trim() || !challenge.trim()}>{busy ? "Starter næste uge…" : "Gem og lav næste uge →"}</button></div>
+        </form>
+      </section>
+    </div>
+  );
 }
 
 function ProfileUpdateModal({
@@ -1765,6 +1938,12 @@ function ProfileUpdateModal({
               onChange={(v) => update("strength", v)}
             />
           </div>
+          <Choice
+            label="Bevægelse i hverdagen"
+            value={draft.mobility || "independent"}
+            onChange={(v) => update("mobility", v as Profile["mobility"])}
+            options={[["independent", "Uden støtte"], ["support", "Af og til støtte"], ["limited", "Tydelige begrænsninger"]]}
+          />
           <div className="update-grid text-update-grid">
             <label className="text-field">
               Allergier
@@ -1779,6 +1958,10 @@ function ProfileUpdateModal({
                 value={draft.dislikes}
                 onChange={(e) => update("dislikes", e.target.value)}
               />
+            </label>
+            <label className="text-field">
+              Smerter eller bevægelseshensyn
+              <input value={draft.painAreas || ""} onChange={(e) => update("painAreas", e.target.value)} />
             </label>
           </div>
           <label className="consent compact-consent">
@@ -1823,11 +2006,13 @@ function TodayView({
   completed,
   toggle,
   onOpen,
+  lesson,
 }: {
   day: PlanDay;
   completed: Set<string>;
   toggle: (id: string) => void;
   onOpen: (t: Tab) => void;
+  lesson?: { day: number; title: string; text: string };
 }) {
   const movementKind =
     `${day.movement.type} ${day.movement.title}`.toLowerCase();
@@ -1934,6 +2119,16 @@ function TodayView({
           </div>
         </aside>
       </div>
+      {lesson && (
+        <section className="daily-lesson">
+          <span>3 MIN</span>
+          <div>
+            <p className="eyebrow">DAGENS LILLE LÆRING</p>
+            <h2>{lesson.title}</h2>
+            <p>{lesson.text}</p>
+          </div>
+        </section>
+      )}
     </>
   );
 }
@@ -1949,6 +2144,14 @@ function WeekView({ plan }: { plan: Plan }) {
           <p>{plan.intro}</p>
         </div>
       </div>
+      {plan.weeklyTargets && (
+        <section className="week-targets">
+          <article><span>🚶</span><b>{plan.weeklyTargets.walkMinutes} min</b><small>gåture denne uge</small></article>
+          <article><span>💪</span><b>{plan.weeklyTargets.strengthSessions} pas</b><small>styrke for hele kroppen</small></article>
+          <article><span>🏊</span><b>{plan.weeklyTargets.swimSessions} pas</b><small>svømning</small></article>
+          <article><span>🌿</span><b>{plan.weeklyTargets.recoveryDays} dag</b><small>bevidst restitution</small></article>
+        </section>
+      )}
       <div className="week-grid">
         {plan.days.map((day, index) => {
           const kind =
@@ -2012,6 +2215,7 @@ function WeekView({ plan }: { plan: Plan }) {
           <b>Din krop bestemmer tempoet.</b> {plan.safetyNote}
         </p>
       </div>
+      {plan.program && <p className="progression-note"><b>Sådan udvikler planen sig:</b> {plan.program.progression}</p>}
     </>
   );
 }
@@ -2026,9 +2230,37 @@ function MealLine({ label, meal }: { label: string; meal: Meal }) {
   );
 }
 
-function FoodView({ plan }: { plan: Plan }) {
+function FoodView({
+  plan,
+  csrf,
+  setPlan,
+}: {
+  plan: Plan;
+  csrf: string;
+  setPlan: (plan: Plan) => void;
+}) {
   const [dayIndex, setDayIndex] = useState(0);
+  const [openMeal, setOpenMeal] = useState("");
+  const [swapping, setSwapping] = useState("");
+  const [error, setError] = useState("");
   const day = plan.days[dayIndex];
+  const swapMeal = async (kind: string) => {
+    setSwapping(kind);
+    setError("");
+    try {
+      const result = await api(
+        "/api/meal/swap",
+        { method: "POST", body: JSON.stringify({ day: day.day, kind }) },
+        csrf,
+      );
+      setPlan(result.plan);
+      setOpenMeal(kind);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Måltidet kunne ikke byttes.");
+    } finally {
+      setSwapping("");
+    }
+  };
   return (
     <>
       <div className="page-heading compact">
@@ -2054,7 +2286,7 @@ function FoodView({ plan }: { plan: Plan }) {
       <div className="food-layout">
         <section className="meal-cards">
           {Object.entries(day.meals).map(([key, meal]) => (
-            <article key={key}>
+            <article className={openMeal === key ? "meal-open" : ""} key={key}>
               <span>
                 {key === "breakfast"
                   ? "🥣"
@@ -2079,9 +2311,24 @@ function FoodView({ plan }: { plan: Plan }) {
                   <small>{meal.ingredients.join(" · ")}</small>
                 )}
                 <em>{meal.portion}</em>
+                <div className="meal-actions">
+                  <button className="link-button" onClick={() => setOpenMeal(openMeal === key ? "" : key)}>
+                    {openMeal === key ? "Skjul opskrift" : "Se opskrift"}
+                  </button>
+                  <button className="link-button swap-meal" disabled={swapping === key} onClick={() => swapMeal(key)}>
+                    {swapping === key ? "Finder…" : "Byt måltid ↻"}
+                  </button>
+                </div>
+                {openMeal === key && (
+                  <div className="meal-recipe">
+                    <b>Sådan gør du {meal.prepMinutes ? `· ca. ${meal.prepMinutes} min` : ""}</b>
+                    <ol>{(meal.method || ["Tilbered råvarerne enkelt og brug portionsforslaget som pejlemærke."]).map((step) => <li key={step}>{step}</li>)}</ol>
+                  </div>
+                )}
               </div>
             </article>
           ))}
+          {error && <p className="form-error">{error}</p>}
         </section>
         <aside>
           <div className="plate-card">
@@ -2145,6 +2392,14 @@ function Shopping({ plan }: { plan: Plan }) {
 }
 
 function TrainingView({ plan }: { plan: Plan }) {
+  const [workoutId, setWorkoutId] = useState(plan.strengthWorkouts?.[0]?.id || "");
+  const selectedWorkout = plan.strengthWorkouts?.find((item) => item.id === workoutId);
+  const visibleExercises = selectedWorkout
+    ? plan.strengthGuide.filter((item) => item.id && selectedWorkout.exerciseIds.includes(item.id))
+    : plan.strengthGuide;
+  const completeLibrary = plan.exerciseLibrary?.length
+    ? plan.exerciseLibrary
+    : plan.strengthGuide;
   return (
     <>
       <div className="page-heading compact">
@@ -2165,14 +2420,28 @@ function TrainingView({ plan }: { plan: Plan }) {
             <h2>Rolige øvelser for hele kroppen</h2>
           </div>
         </div>
+        {plan.strengthWorkouts && plan.strengthWorkouts.length > 0 && (
+          <div className="workout-picker">
+            {plan.strengthWorkouts.map((workout) => (
+              <button className={workout.id === workoutId ? "active" : ""} onClick={() => setWorkoutId(workout.id)} key={workout.id}>
+                <span>PAS {workout.id}</span><b>{workout.title}</b><small>{workout.rounds} runder · pause efter behov</small>
+              </button>
+            ))}
+            <button className={workoutId === "all" ? "active" : ""} onClick={() => setWorkoutId("all")}>
+              <span>BIBLIOTEK</span><b>Alle {completeLibrary.length} øvelser</b><small>Se lettere og sværere varianter</small>
+            </button>
+          </div>
+        )}
         <div className="exercise-list">
-          {plan.strengthGuide.map((item, index) => (
+          {(workoutId === "all" ? completeLibrary : visibleExercises).map((item, index) => (
             <article className="exercise-card" key={item.exercise}>
               <i className="exercise-number">{index + 1}</i>
               <ExerciseMedia
                 exercise={item.exercise}
                 how={item.how}
                 easier={item.easier}
+                harder={item.harder}
+                videoKey={item.videoKey}
               />
               <div className="exercise-copy">
                 <h3>{item.exercise}</h3>
@@ -2183,6 +2452,8 @@ function TrainingView({ plan }: { plan: Plan }) {
                 <small>
                   <b>Lettere:</b> {item.easier}
                 </small>
+                {item.harder && <small><b>Sværere:</b> {item.harder}</small>}
+                {item.equipment && <small className="equipment"><b>Udstyr:</b> {item.equipment}</small>}
               </div>
             </article>
           ))}
@@ -2276,9 +2547,25 @@ const exerciseVideos: Record<string, ExerciseVideo> = {
     source:
       "https://www.pexels.com/video/an-instructor-showing-elderly-some-exercise-steps-while-sitting-down-3196290/",
   },
+  bridge: {
+    src: "/exercises/glute-bridge.mp4", poster: "/exercises/glute-bridge.webp", title: "Hofteløft", credit: "Polina Tankilevitch · Pexels", source: "https://www.pexels.com/video/woman-doing-glute-bridge-exercise-6525487/",
+  },
+  step: {
+    src: "/exercises/step-up.mp4", poster: "/exercises/step-up.webp", title: "Step-up", credit: "Mikhail Nilov · Pexels", source: "https://www.pexels.com/video/a-woman-doing-a-step-up-and-down-exercise-6739968/",
+  },
+  calf: {
+    src: "/exercises/calf-raise.mp4", poster: "/exercises/calf-raise.webp", title: "Hælløft", credit: "Gaurav Kumar · Pexels", source: "https://www.pexels.com/video/intense-calf-workout-in-gym-setting-32115656/",
+  },
+  shoulder: {
+    src: "/exercises/shoulder-press.mp4", poster: "/exercises/shoulder-press.webp", title: "Skulderpres", credit: "JULLIAN PRODUCTION · Pexels", source: "https://www.pexels.com/video/man-lifting-dumbbells-in-home-gym-36623781/",
+  },
+  biceps: {
+    src: "/exercises/biceps-curl.mp4", poster: "/exercises/biceps-curl.webp", title: "Armbøjning med vægt", credit: "MART PRODUCTION · Pexels", source: "https://www.pexels.com/video/a-woman-doing-bicep-curls-at-home-8837117/",
+  },
 };
 
-function videoForExercise(exercise: string) {
+function videoForExercise(exercise: string, videoKey?: string) {
+  if (videoKey && exerciseVideos[videoKey]) return exerciseVideos[videoKey];
   const name = exercise.toLowerCase();
   if (name.includes("plank")) return exerciseVideos.plank;
   if (
@@ -2310,12 +2597,16 @@ function ExerciseMedia({
   exercise,
   how,
   easier,
+  harder,
+  videoKey,
 }: {
   exercise: string;
   how: string;
   easier: string;
+  harder?: string;
+  videoKey?: string;
 }) {
-  const media = videoForExercise(exercise);
+  const media = videoForExercise(exercise, videoKey);
   const preview = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(
     () => !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -2356,7 +2647,7 @@ function ExerciseMedia({
           onClick={() => setOpen(true)}
           aria-label={`Åbn video for ${exercise}`}
         >
-          <i>▶</i> Se teknikken
+          <i>▶</i> Se bevægelsen
         </button>
         <button
           type="button"
@@ -2403,9 +2694,10 @@ function ExerciseMedia({
               <p className="video-easier">
                 <b>Lettere variant:</b> {easier}
               </p>
+              {harder && <p className="video-harder"><b>Når du er klar:</b> {harder}</p>}
               <small>
-                Videoen er en generel demonstration. Følg altid din beskrevne
-                variant og stop ved smerte.
+                Videoen viser bevægelsesfamilien. Følg din beskrevne variant,
+                brug den lettere udgave ved behov, og stop ved smerte.
               </small>
               <a href={media.source} target="_blank" rel="noreferrer">
                 Video: {media.credit} ↗
@@ -2414,6 +2706,58 @@ function ExerciseMedia({
           </section>
         </div>
       )}
+    </>
+  );
+}
+
+type CoachMessage = { role: "user" | "assistant"; content: string; created_at?: string };
+
+function CoachView({ csrf }: { csrf: string }) {
+  const [messages, setMessages] = useState<CoachMessage[]>([]);
+  const [question, setQuestion] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const end = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    api("/api/me").then((data) => setMessages(data.coachMessages || [])).catch(() => null);
+  }, []);
+  useEffect(() => {
+    if (end.current && typeof end.current.scrollIntoView === "function") {
+      end.current.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+  }, [messages, busy]);
+  const ask = async (event: FormEvent) => {
+    event.preventDefault();
+    const value = question.trim();
+    if (!value || busy) return;
+    setQuestion("");
+    setError("");
+    setBusy(true);
+    setMessages((current) => [...current, { role: "user", content: value }]);
+    try {
+      const result = await api("/api/coach", { method: "POST", body: JSON.stringify({ question: value }) }, csrf);
+      setMessages((current) => [...current, { role: "assistant", content: result.answer }]);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Coachen kunne ikke svare lige nu.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  const suggestions = ["Hvordan gør jeg dagens træning lettere?", "Hvad kan jeg spise, når jeg er lækkersulten?", "Jeg mistede rytmen – hvordan starter jeg igen?"];
+  return (
+    <>
+      <div className="page-heading compact"><div><p className="eyebrow">DIN AI-COACH · 12 SVAR OM DAGEN</p><h1>Spørg Fri Form.</h1><p>Få hjælp til at gøre din plan mere mulig – uden skældud, kure eller forbud.</p></div></div>
+      <section className="coach-shell">
+        <div className="coach-messages" aria-live="polite">
+          {messages.length === 0 && <div className="coach-welcome"><i>✦</i><h2>Hvad fylder i dag?</h2><p>Jeg kender din ugeplan og kan hjælpe med lettere alternativer, madidéer og at komme tilbage efter en svær dag.</p><div>{suggestions.map((item) => <button onClick={() => setQuestion(item)} key={item}>{item}</button>)}</div></div>}
+          {messages.map((message, index) => <article className={message.role} key={`${index}-${message.content.slice(0, 12)}`}><span>{message.role === "assistant" ? "FRI FORM" : "DIG"}</span><p>{message.content}</p></article>)}
+          {busy && <article className="assistant thinking"><span>FRI FORM</span><p><i /> Tænker over et roligt, konkret svar…</p></article>}
+          <div ref={end} />
+        </div>
+        {error && <p className="form-error">{error}</p>}
+        <form className="coach-form" onSubmit={ask}><textarea rows={2} maxLength={800} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Fx: Mine knæ er trætte i dag – hvad vælger jeg i stedet?" aria-label="Spørg Fri Form-coachen" /><button className="primary" disabled={busy || !question.trim()}>{busy ? "Svarer…" : "Send →"}</button></form>
+        <small className="coach-disclaimer">Dit spørgsmål sendes uden navn og e-mail til OpenCode Go. Coachen giver generel livsstilsstøtte og kan tage fejl. Den erstatter ikke læge, fysioterapeut eller diætist.</small>
+      </section>
     </>
   );
 }
@@ -2427,6 +2771,7 @@ function ProgressView({
   resend,
   emailBusy,
   provider,
+  onNextWeek,
 }: {
   plan: Plan;
   profile: Profile;
@@ -2436,6 +2781,7 @@ function ProgressView({
   resend: () => void;
   emailBusy: boolean;
   provider: string;
+  onNextWeek: () => void;
 }) {
   const [weight, setWeight] = useState(profile.weight);
   const [mood, setMood] = useState(3);
@@ -2444,6 +2790,13 @@ function ProgressView({
   const completed = checkins.filter((c) => c.completed).length;
   const days = new Set(checkins.filter((c) => c.completed).map((c) => c.day))
     .size;
+  const weightPoints = checkins
+    .filter((item) => typeof item.weight === "number")
+    .sort((a, b) => a.day.localeCompare(b.day))
+    .slice(-12);
+  const weightValues = weightPoints.map((item) => Number(item.weight));
+  const weightMin = weightValues.length ? Math.min(...weightValues) : profile.weight;
+  const weightMax = weightValues.length ? Math.max(...weightValues) : profile.weight;
   const save = async () => {
     await api(
       "/api/checkin",
@@ -2493,6 +2846,17 @@ function ProgressView({
           <p>Energi, vaner og gentagelser tæller også som fremgang.</p>
         </div>
       </div>
+      <section className="progress-chart">
+        <div className="section-head"><div><p className="eyebrow">DIN RETNING</p><h2>Vægt over tid</h2></div><small>{weightPoints.length ? `${weightPoints.length} registreringer` : "Din første registrering bliver starten"}</small></div>
+        {weightPoints.length > 0 ? (
+          <div className="weight-bars">
+            {weightPoints.map((point) => {
+              const height = weightMax === weightMin ? 55 : 20 + ((Number(point.weight) - weightMin) / (weightMax - weightMin)) * 65;
+              return <i key={`${point.day}-${point.item_id}`} style={{ height: `${height}%` }} title={`${point.day}: ${point.weight} kg`}><b>{point.weight}</b><small>{point.day.slice(5)}</small></i>;
+            })}
+          </div>
+        ) : <p className="empty-chart">Vejning er valgfri. Når du gemmer check-ins, viser vi udviklingen her – uden røde tal eller dom.</p>}
+      </section>
       <div className="stat-grid">
         <article>
           <span>✓</span>
@@ -2549,15 +2913,12 @@ function ProgressView({
           </button>
         </div>
       </section>
-      <section className="reflection">
-        <h2>Ugens refleksion</h2>
-        {plan.checkInQuestions.map((question) => (
-          <label key={question}>
-            {question}
-            <textarea rows={2} placeholder="Skriv til dig selv…" />
-          </label>
-        ))}
-      </section>
+      {plan.program && plan.program.currentWeek < plan.program.totalWeeks && (
+        <section className="reflection saved-reflection">
+          <div><p className="eyebrow">UGENS REFLEKSION</p><h2>Gør næste uge klogere</h2><p>Dine svar bliver nu gemt og bruges af AI’en til at justere tempo, mad og aktivitet.</p></div>
+          <button className="primary" onClick={onNextWeek}>Afslut uge {plan.program.currentWeek} →</button>
+        </section>
+      )}
       <section className="account-card">
         <div>
           <p className="eyebrow">DIN KONTO</p>
@@ -2602,6 +2963,8 @@ type AdminData = {
     plans: number;
     emailsSent: number;
     completedSteps: number;
+    weeklyReviews: number;
+    coachAnswers: number;
     failedJobs: number;
     enrollmentLimit: number;
     enrolledNew: number;
@@ -2625,6 +2988,7 @@ type AdminData = {
       phase: string;
       started_at: string;
       completed_calls: number;
+      total_calls: number;
     };
     fiveHours: UsageWindow;
     week: UsageWindow;
@@ -2710,6 +3074,8 @@ function AdminView() {
     ],
     ["Planer", data.counts.plans, `${data.counts.emailsSent} sendt på mail`],
     ["Fremgang", data.counts.completedSteps, "markerede skridt"],
+    ["Uge-check-ins", data.counts.weeklyReviews, "gemte tilpasninger"],
+    ["AI-coach", data.counts.coachAnswers, "svar til brugerne"],
     ["Fejlede jobs", data.counts.failedJobs, "kræver evt. kontrol"],
   ];
   return (
@@ -2809,6 +3175,7 @@ function OpenCodeMeter({
         Math.floor((now - new Date(usage.active.started_at).getTime()) / 1000),
       )
     : 0;
+  const activeTotal = usage.active?.total_calls || 5;
   return (
     <section className="ai-meter">
       <div className="ai-meter-head">
@@ -2837,14 +3204,14 @@ function OpenCodeMeter({
             <span />
           </div>
           <div>
-            <small>AKTUEL FASE · {usage.active.completed_calls + 1} AF 5</small>
+            <small>AKTUEL FASE · {Math.min(activeTotal, usage.active.completed_calls + 1)} AF {activeTotal}</small>
             <h3>{usage.active.phase}</h3>
             <p>
               OpenCode har arbejdet i {formatDuration(activeSeconds)}. Tallene
               opdateres automatisk.
             </p>
           </div>
-          <b>{Math.min(100, (usage.active.completed_calls / 5) * 100)}%</b>
+          <b>{Math.min(100, (usage.active.completed_calls / activeTotal) * 100)}%</b>
         </div>
       )}
       <div className="usage-windows">

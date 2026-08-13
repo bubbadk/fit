@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from http import HTTPStatus
@@ -26,6 +27,15 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+
+from program_content import (
+    VIDEO_CREDITS,
+    apply_program_structure,
+    ensure_meal_safety,
+    meal_options,
+    safe_meal,
+    total_weeks,
+)
 
 
 ROOT = Path(__file__).resolve().parent
@@ -75,12 +85,20 @@ def iso_now() -> str:
     return utc_now().isoformat()
 
 
-def db() -> sqlite3.Connection:
+@contextmanager
+def db():
     conn = sqlite3.connect(DB_PATH, timeout=20)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute("PRAGMA journal_mode = WAL")
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def init_db() -> None:
@@ -118,6 +136,27 @@ def init_db() -> None:
               provider TEXT NOT NULL,
               created_at TEXT NOT NULL,
               emailed_at TEXT
+            );
+            CREATE TABLE IF NOT EXISTS weekly_reviews (
+              id INTEGER PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              program_week INTEGER NOT NULL,
+              weight REAL,
+              energy INTEGER NOT NULL,
+              difficulty INTEGER NOT NULL,
+              pain INTEGER NOT NULL DEFAULT 0,
+              win_text TEXT NOT NULL,
+              challenge_text TEXT NOT NULL,
+              next_focus TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              UNIQUE(user_id, program_week)
+            );
+            CREATE TABLE IF NOT EXISTS coach_messages (
+              id INTEGER PRIMARY KEY,
+              user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              role TEXT NOT NULL CHECK(role IN ('user','assistant')),
+              content TEXT NOT NULL,
+              created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS checkins (
               user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -170,6 +209,8 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_password_reset_user ON password_reset_tokens(user_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ai_usage_started ON ai_usage_events(started_at DESC);
             CREATE INDEX IF NOT EXISTS idx_ai_usage_job ON ai_usage_events(job_id, id);
+            CREATE INDEX IF NOT EXISTS idx_reviews_user_week ON weekly_reviews(user_id, program_week DESC);
+            CREATE INDEX IF NOT EXISTS idx_coach_user_created ON coach_messages(user_id, id DESC);
             PRAGMA optimize;
             """
         )
@@ -183,6 +224,12 @@ def init_db() -> None:
             conn.execute("ALTER TABLE users ADD COLUMN program_started_at TEXT")
         if "program_ends_at" not in user_columns:
             conn.execute("ALTER TABLE users ADD COLUMN program_ends_at TEXT")
+        plan_columns = {row["name"] for row in conn.execute("PRAGMA table_info(plans)")}
+        if "program_week" not in plan_columns:
+            conn.execute("ALTER TABLE plans ADD COLUMN program_week INTEGER NOT NULL DEFAULT 1")
+        job_columns = {row["name"] for row in conn.execute("PRAGMA table_info(plan_jobs)")}
+        if "program_week" not in job_columns:
+            conn.execute("ALTER TABLE plan_jobs ADD COLUMN program_week INTEGER NOT NULL DEFAULT 1")
 
 
 def b64hex(data: bytes) -> str:
@@ -274,7 +321,7 @@ def make_session(conn: sqlite3.Connection, user_id: int) -> tuple[str, str]:
 
 def latest_plan(conn: sqlite3.Connection, user_id: int) -> dict[str, Any] | None:
     row = conn.execute(
-        "SELECT id,plan_json,provider,created_at,emailed_at FROM plans WHERE user_id=? ORDER BY id DESC LIMIT 1",
+        "SELECT id,plan_json,provider,created_at,emailed_at,program_week FROM plans WHERE user_id=? ORDER BY id DESC LIMIT 1",
         (user_id,),
     ).fetchone()
     if not row:
@@ -285,6 +332,7 @@ def latest_plan(conn: sqlite3.Connection, user_id: int) -> dict[str, Any] | None
         "provider": row["provider"],
         "created_at": row["created_at"],
         "emailed_at": row["emailed_at"],
+        "program_week": row["program_week"],
     }
 
 
@@ -332,6 +380,11 @@ def validate_profile(raw: Any) -> dict[str, Any]:
         "heart": bool(raw.get("heart", False)),
         "pregnant": bool(raw.get("pregnant", False)),
         "eatingDisorder": bool(raw.get("eatingDisorder", False)),
+        "uncontrolledBloodPressure": bool(raw.get("uncontrolledBloodPressure", False)),
+        "recentSurgery": bool(raw.get("recentSurgery", False)),
+        "mobility": str(raw.get("mobility", "independent")),
+        "medication": re.sub(r"\s+", " ", str(raw.get("medication", "")))[:200],
+        "painAreas": re.sub(r"\s+", " ", str(raw.get("painAreas", "")))[:200],
         "allergies": re.sub(r"\s+", " ", str(raw.get("allergies", "")))[:200],
         "dislikes": re.sub(r"\s+", " ", str(raw.get("dislikes", "")))[:200],
         "cookingMinutes": int(bounded_number(raw, "cookingMinutes", 10, 90)),
@@ -340,6 +393,8 @@ def validate_profile(raw: Any) -> dict[str, Any]:
     for key, values in allowed.items():
         if result[key] not in values:
             raise ValueError(f"Ugyldigt valg i {key}.")
+    if result["mobility"] not in {"independent", "support", "limited"}:
+        raise ValueError("Ugyldigt valg i mobility.")
     if not (result["walk"] or result["swim"] or result["strength"]):
         raise ValueError("Vælg mindst én motionsform.")
     if not result["consent"]:
@@ -354,13 +409,18 @@ def safety_block(profile: dict[str, Any]) -> str | None:
         return "Ved nuværende eller tidligere spiseforstyrrelse bør en individuel plan laves sammen med en fagperson."
     if profile["heart"]:
         return "Ved hjertesygdom skal træningsintensitet afklares med egen læge, før planen startes."
+    if profile.get("uncontrolledBloodPressure"):
+        return "Ved uafklaret eller meget højt blodtryk skal træning og vægttab først afklares med egen læge."
+    if profile.get("recentSurgery"):
+        return "Efter en nylig operation skal aktivitet først afklares med den afdeling eller fagperson, der følger dig."
     return None
 
 
 def plan_prompt(profile: dict[str, Any]) -> str:
-    safe = {key: value for key, value in profile.items() if key != "consent"}
+    safe = {key: value for key, value in profile.items() if key != "consent" and not key.startswith("_")}
+    week = int(profile.get("_program_week", 1))
     return f"""
-Lav en realistisk, detaljeret 7-dages vægttabsplan på dansk til en voksen.
+Lav en realistisk, detaljeret uge {week}-plan på dansk til en voksen.
 Profilen er pseudonymiseret og indeholder ingen navn eller e-mail:
 {json.dumps(safe, ensure_ascii=False)}
 
@@ -376,10 +436,10 @@ Returnér KUN gyldig JSON med præcis denne form:
   "days":[{{
     "day":1, "name":"Mandag", "focus":"...",
     "meals":{{
-      "breakfast":{{"title":"...","ingredients":["..."],"portion":"..."}},
-      "lunch":{{"title":"...","ingredients":["..."],"portion":"..."}},
-      "dinner":{{"title":"...","ingredients":["..."],"portion":"..."}},
-      "snack":{{"title":"...","portion":"..."}}
+      "breakfast":{{"title":"...","ingredients":["..."],"portion":"...","method":["..."],"prepMinutes":10}},
+      "lunch":{{"title":"...","ingredients":["..."],"portion":"...","method":["..."],"prepMinutes":10}},
+      "dinner":{{"title":"...","ingredients":["..."],"portion":"...","method":["..."],"prepMinutes":30}},
+      "snack":{{"title":"...","ingredients":["..."],"portion":"...","method":["..."],"prepMinutes":5}}
     }},
     "movement":{{"type":"gåtur|svømning|styrke|restitution","title":"...","minutes":20,"intensity":"...","instructions":["..."],"alternative":"..."}},
     "habit":"...", "encouragement":"..."
@@ -457,21 +517,26 @@ def qwen36_cost(usage: dict[str, Any]) -> float:
     )
 
 
-def opencode_text(key: str, prompt: str, max_tokens: int = 2000, job_id: str = "", phase: str = "OpenCode-kald") -> str:
-    event_id = None
-    if job_id:
-        with db() as conn:
-            event_id = conn.execute(
-                "INSERT INTO ai_usage_events(job_id,provider,model,phase,status,started_at) VALUES(?,?,?,?,?,?)",
-                (job_id, "opencode-go", "qwen3.6-plus", phase, "running", iso_now()),
-            ).lastrowid
+def opencode_text(
+    key: str,
+    prompt: str,
+    max_tokens: int = 2000,
+    job_id: str = "",
+    phase: str = "OpenCode-kald",
+    system_message: str = "Du er en forsigtig dansk sundhedsplanlægger. Returnér kun gyldig JSON uden markdown.",
+) -> str:
+    with db() as conn:
+        event_id = conn.execute(
+            "INSERT INTO ai_usage_events(job_id,provider,model,phase,status,started_at) VALUES(?,?,?,?,?,?)",
+            (job_id or None, "opencode-go", "qwen3.6-plus", phase, "running", iso_now()),
+        ).lastrowid
     try:
         response = call_json_api(
             "https://opencode.ai/zen/go/v1/messages",
             {"x-api-key": key, "anthropic-version": "2023-06-01"},
             {
                 "model": "qwen3.6-plus",
-                "system": "Du er en forsigtig dansk sundhedsplanlægger. Returnér kun gyldig JSON uden markdown.",
+                "system": system_message,
                 "messages": [{"role": "user", "content": prompt}],
                 "thinking": {"type": "disabled"},
                 "temperature": 0.2,
@@ -480,28 +545,26 @@ def opencode_text(key: str, prompt: str, max_tokens: int = 2000, job_id: str = "
             120,
         )
         usage = response.get("usage", {})
-        if event_id:
-            with db() as conn:
-                conn.execute(
-                    """UPDATE ai_usage_events SET status='completed',input_tokens=?,output_tokens=?,
-                       cache_read_tokens=?,cache_write_tokens=?,estimated_cost_usd=?,finished_at=? WHERE id=?""",
-                    (
-                        int(usage.get("input_tokens", 0)),
-                        int(usage.get("output_tokens", 0)),
-                        int(usage.get("cache_read_input_tokens", 0)),
-                        int(usage.get("cache_creation_input_tokens", 0)),
-                        qwen36_cost(usage),
-                        iso_now(),
-                        event_id,
-                    ),
-                )
+        with db() as conn:
+            conn.execute(
+                """UPDATE ai_usage_events SET status='completed',input_tokens=?,output_tokens=?,
+                   cache_read_tokens=?,cache_write_tokens=?,estimated_cost_usd=?,finished_at=? WHERE id=?""",
+                (
+                    int(usage.get("input_tokens", 0)),
+                    int(usage.get("output_tokens", 0)),
+                    int(usage.get("cache_read_input_tokens", 0)),
+                    int(usage.get("cache_creation_input_tokens", 0)),
+                    qwen36_cost(usage),
+                    iso_now(),
+                    event_id,
+                ),
+            )
     except Exception as exc:
-        if event_id:
-            with db() as conn:
-                conn.execute(
-                    "UPDATE ai_usage_events SET status='failed',error_type=?,finished_at=? WHERE id=?",
-                    (type(exc).__name__[:80], iso_now(), event_id),
-                )
+        with db() as conn:
+            conn.execute(
+                "UPDATE ai_usage_events SET status='failed',error_type=?,finished_at=? WHERE id=?",
+                (type(exc).__name__[:80], iso_now(), event_id),
+            )
         raise
     blocks = [block.get("text", "") for block in response.get("content", []) if block.get("type") == "text"]
     if not blocks:
@@ -510,9 +573,12 @@ def opencode_text(key: str, prompt: str, max_tokens: int = 2000, job_id: str = "
 
 
 def generate_opencode_plan(key: str, profile: dict[str, Any], job_id: str) -> dict[str, Any]:
-    safe_profile = json.dumps({k: v for k, v in profile.items() if k != "consent"}, ensure_ascii=False)
-    common = f"Profil (uden navn og e-mail): {safe_profile}. Brug almindelige danske råvarer, tallerkenmodellen, gradvis aktivitet og alle valgte hensyn. Ingen faste, ekstreme kure, kosttilskud eller løfter."
-    day_shape = """Hver dag skal have: day (tal), name, focus, meals med breakfast/lunch/dinner/snack; hvert måltid har title, ingredients (liste) og portion. movement har type, title, minutes, intensity, instructions (liste) og alternative. Desuden habit og encouragement."""
+    week = int(profile.get("_program_week", 1))
+    review = str(profile.get("_weekly_review", "")).strip()
+    safe_profile = json.dumps({k: v for k, v in profile.items() if k != "consent" and not k.startswith("_")}, ensure_ascii=False)
+    review_context = f" Seneste ugecheck: {review}. Tilpas forsigtigt efter den." if review else ""
+    common = f"Profil (uden navn og e-mail): {safe_profile}. Dette er uge {week} i et gradvist forløb.{review_context} Brug almindelige danske råvarer, tallerkenmodellen, gradvis aktivitet og alle valgte hensyn. Ingen faste, ekstreme kure, kosttilskud eller løfter."
+    day_shape = """Hver dag skal have: day (tal), name, focus, meals med breakfast/lunch/dinner/snack; hvert måltid har title, ingredients (liste), portion, method (2-4 korte trin) og prepMinutes. movement har type, title, minutes, intensity, instructions (liste) og alternative. Desuden habit og encouragement."""
     prompts = {
         "overview": f"""{common}\nLav planens overblik som JSON med nøglerne title, intro, weeklyFocus, safetyNote, waterTip, sleepTip, strengthGuide, swimGuide, shoppingList, checkInQuestions og medicalReminder. strengthGuide er en liste med exercise, sets, reps, how og easier. swimGuide er en liste med part, minutes og how, når svømning er valgt. shoppingList har grupperne grønt, protein, fuldkornOgKartofler og andet.""",
         "days_12": f"""{common}\nLav dag 1-2 (Mandag-Tirsdag) som JSON {{\"days\":[...]}}. {day_shape} Variation mellem valgte motionsformer og konkrete, forskellige måltider.""",
@@ -674,8 +740,11 @@ def send_password_reset_email_safely(recipient: str, name: str, raw_token: str) 
 
 def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
     user = os.getenv("GMAIL_SMTP_USER", "").strip()
+    program = plan.get("program", {})
+    week = int(program.get("currentWeek", 1))
+    total = int(program.get("totalWeeks", 1))
     message = EmailMessage()
-    message["Subject"] = "Din Fri Form-plan er klar"
+    message["Subject"] = f"Din Fri Form-plan for uge {week} er klar"
     message["From"] = f"Fri Form <{user}>"
     message["To"] = recipient
     text_days = []
@@ -701,10 +770,10 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
     <div style="font-family:Arial,sans-serif;max-width:680px;margin:auto;color:#24342e;line-height:1.55">
       <div style="background:#173f31;color:white;padding:26px;border-radius:18px 18px 0 0">
         <small style="letter-spacing:2px">FRI FORM · ALTID GRATIS</small>
-        <h1 style="margin:8px 0 0">Din personlige ugeplan</h1>
+        <h1 style="margin:8px 0 0">Din personlige uge {week} af {total}</h1>
       </div>
       <div style="padding:26px;background:#fbfaf4">
-        <p>Hej {html.escape(name)},</p><p>{html.escape(str(plan['intro']))}</p>
+        <p>Hej {html.escape(name)},</p><p><b>{html.escape(str(program.get('phase', 'Din næste uge')))}</b></p><p>{html.escape(str(plan['intro']))}</p>
         {''.join(html_days)}
         <p style="padding:16px;background:#edf5ef;border-radius:12px"><b>Vigtigt:</b> {html.escape(str(plan['medicalReminder']))}</p>
         <p><a href="https://fit.dybbol.com/" style="display:inline-block;background:#e56f3d;color:white;padding:12px 18px;border-radius:999px;text-decoration:none;font-weight:bold">Log ind og se min plan</a></p>
@@ -715,11 +784,26 @@ def send_plan_email(recipient: str, name: str, plan: dict[str, Any]) -> None:
     send_email_message(message)
 
 
-def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: dict[str, Any]) -> None:
+def run_plan_job(
+    job_id: str,
+    user_id: int,
+    recipient: str,
+    name: str,
+    profile: dict[str, Any],
+    program_week: int,
+    program_weeks: int,
+    weekly_review: str = "",
+) -> None:
     try:
         with db() as conn:
             conn.execute("UPDATE plan_jobs SET status='running',updated_at=? WHERE id=?", (iso_now(), job_id))
-        plan, provider = generate_ai_plan(profile, job_id)
+        generation_profile = dict(profile)
+        generation_profile["_program_week"] = program_week
+        if weekly_review:
+            generation_profile["_weekly_review"] = weekly_review
+        plan, provider = generate_ai_plan(generation_profile, job_id)
+        plan = ensure_meal_safety(plan, profile)
+        plan = apply_program_structure(plan, profile, program_week, program_weeks)
         email_sent = False
         try:
             send_plan_email(recipient, name, plan)
@@ -727,8 +811,9 @@ def run_plan_job(job_id: str, user_id: int, recipient: str, name: str, profile: 
         except Exception as exc:
             print(f"Email send failed: {type(exc).__name__}", file=sys.stderr, flush=True)
         with db() as conn:
-            conn.execute("INSERT INTO profiles(user_id,data_json,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at", (user_id, json.dumps(profile, ensure_ascii=False), iso_now()))
-            cursor = conn.execute("INSERT INTO plans(user_id,plan_json,provider,created_at,emailed_at) VALUES(?,?,?,?,?)", (user_id, json.dumps(plan, ensure_ascii=False), provider, iso_now(), iso_now() if email_sent else None))
+            stored_profile = {key: value for key, value in profile.items() if not key.startswith("_")}
+            conn.execute("INSERT INTO profiles(user_id,data_json,updated_at) VALUES(?,?,?) ON CONFLICT(user_id) DO UPDATE SET data_json=excluded.data_json,updated_at=excluded.updated_at", (user_id, json.dumps(stored_profile, ensure_ascii=False), iso_now()))
+            cursor = conn.execute("INSERT INTO plans(user_id,plan_json,provider,created_at,emailed_at,program_week) VALUES(?,?,?,?,?,?)", (user_id, json.dumps(plan, ensure_ascii=False), provider, iso_now(), iso_now() if email_sent else None, program_week))
             conn.execute("UPDATE plan_jobs SET status='done',plan_id=?,provider=?,email_sent=?,updated_at=? WHERE id=?", (cursor.lastrowid, provider, int(email_sent), iso_now(), job_id))
     except Exception as exc:
         print(f"Plan job failed: {type(exc).__name__}", file=sys.stderr, flush=True)
@@ -762,6 +847,32 @@ def ai_usage_window(conn: sqlite3.Connection, seconds: int, limit_usd: float) ->
         "remainingUsd": round(max(0.0, limit_usd - cost), 6),
         "releaseAt": release_at,
     }
+
+
+def coach_answer(question: str, profile: dict[str, Any], plan: dict[str, Any]) -> str:
+    key = os.getenv("OPENCODE_GO_API_KEY", "").strip()
+    if not key:
+        raise RuntimeError("AI-coachen er ikke konfigureret.")
+    safe_profile = {k: v for k, v in profile.items() if k not in {"consent", "medication"} and not k.startswith("_")}
+    program = plan.get("program", {})
+    today_titles = [day.get("movement", {}).get("title", "") for day in plan.get("days", [])]
+    prompt = f"""Brugerens pseudonymiserede profil: {json.dumps(safe_profile, ensure_ascii=False)}
+Forløb: uge {program.get('currentWeek', 1)} af {program.get('totalWeeks', 1)}, fase {program.get('phase', 'rolig start')}.
+Ugens aktiviteter: {json.dumps(today_titles, ensure_ascii=False)}
+Brugerens spørgsmål: {question}
+
+Svar på dansk i højst 170 ord. Vær konkret, varm og ikke-dømmende. Brug planen som udgangspunkt.
+Giv højst tre små handlemuligheder. Du må ikke diagnosticere, ændre medicin, anbefale faste,
+kosttilskud eller ekstreme restriktioner. Ved stærke smerter, akut åndenød, brystsmerter,
+spiseforstyrrelse eller spørgsmål om medicin skal du tydeligt henvise til relevant fagperson.
+Skriv almindelig tekst uden markdown-overskrift."""
+    return opencode_text(
+        key,
+        prompt,
+        max_tokens=600,
+        phase="Fri Form-coach",
+        system_message="Du er Fri Forms forsigtige danske livsstilscoach. Du giver generel støtte, aldrig lægelig behandling.",
+    ).strip()[:3000]
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -871,7 +982,19 @@ class AppHandler(BaseHTTPRequestHandler):
             with db() as conn:
                 profile_row = conn.execute("SELECT data_json FROM profiles WHERE user_id=?", (session["user_id"],)).fetchone()
                 plan = latest_plan(conn, session["user_id"])
+                if plan and profile_row and (
+                    not plan["plan"].get("program")
+                    or not plan["plan"].get("exerciseLibrary")
+                ):
+                    stored_profile = json.loads(profile_row["data_json"])
+                    upgraded = ensure_meal_safety(plan["plan"], stored_profile)
+                    upgraded = apply_program_structure(upgraded, stored_profile, int(plan["program_week"] or 1), total_weeks(session["program_days"]))
+                    conn.execute("UPDATE plans SET plan_json=? WHERE id=? AND user_id=?", (json.dumps(upgraded, ensure_ascii=False), plan["id"], session["user_id"]))
+                    plan["plan"] = upgraded
                 checkins = [dict(row) for row in conn.execute("SELECT day,item_id,completed,weight,mood,updated_at FROM checkins WHERE user_id=? ORDER BY day", (session["user_id"],))]
+                reviews = [dict(row) for row in conn.execute("SELECT program_week,weight,energy,difficulty,pain,win_text,challenge_text,next_focus,created_at FROM weekly_reviews WHERE user_id=? ORDER BY program_week", (session["user_id"],))]
+                plan_history = [dict(row) for row in conn.execute("SELECT id,program_week,created_at,emailed_at,provider FROM plans WHERE user_id=? ORDER BY program_week,id", (session["user_id"],))]
+                coach_messages = [dict(row) for row in conn.execute("SELECT role,content,created_at FROM (SELECT id,role,content,created_at FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT 20) ORDER BY id", (session["user_id"],))]
             self.json_response(200, {
                 "authenticated": True,
                 "user": user_payload(session),
@@ -879,6 +1002,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 "profile": json.loads(profile_row["data_json"]) if profile_row else None,
                 "latestPlan": plan,
                 "checkins": checkins,
+                "weeklyReviews": reviews,
+                "planHistory": plan_history,
+                "coachMessages": coach_messages,
             })
             return
         if path == "/api/admin/stats":
@@ -902,6 +1028,8 @@ class AppHandler(BaseHTTPRequestHandler):
                     "plans": conn.execute("SELECT COUNT(*) FROM plans").fetchone()[0],
                     "emailsSent": conn.execute("SELECT COUNT(*) FROM plans WHERE emailed_at IS NOT NULL").fetchone()[0],
                     "completedSteps": conn.execute("SELECT COUNT(*) FROM checkins WHERE completed=1").fetchone()[0],
+                    "weeklyReviews": conn.execute("SELECT COUNT(*) FROM weekly_reviews").fetchone()[0],
+                    "coachAnswers": conn.execute("SELECT COUNT(*) FROM coach_messages WHERE role='assistant'").fetchone()[0],
                     "failedJobs": conn.execute("SELECT COUNT(*) FROM plan_jobs WHERE status='failed'").fetchone()[0],
                 }
                 enrolled = max(0, counts["users"] - EXEMPT_EXISTING_USERS)
@@ -930,7 +1058,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 ai_usage = {
                     "configured": bool(os.getenv("OPENCODE_GO_API_KEY", "").strip()),
                     "model": "qwen3.6-plus",
-                    "active": dict(active_row) if active_row else None,
+                    "active": ({**dict(active_row), "total_calls": 5 if active_row["job_id"] else 1} if active_row else None),
                     "fiveHours": ai_usage_window(conn, 5 * 3600, 12.0),
                     "week": ai_usage_window(conn, 7 * 86400, 30.0),
                     "month": ai_usage_window(conn, 30 * 86400, 60.0),
@@ -1128,9 +1256,130 @@ class AppHandler(BaseHTTPRequestHandler):
                     return
                 job_id = secrets.token_urlsafe(18)
                 with db() as conn:
-                    conn.execute("INSERT INTO plan_jobs(id,user_id,status,created_at,updated_at) VALUES(?,?,?,?,?)", (job_id, session["user_id"], "pending", iso_now(), iso_now()))
-                threading.Thread(target=run_plan_job, args=(job_id, session["user_id"], session["email"], session["name"], profile), daemon=True, name=f"plan-{job_id[:8]}").start()
+                    latest = latest_plan(conn, session["user_id"])
+                    program_week = int(latest["program_week"]) if latest else 1
+                    conn.execute("INSERT INTO plan_jobs(id,user_id,status,created_at,updated_at,program_week) VALUES(?,?,?,?,?,?)", (job_id, session["user_id"], "pending", iso_now(), iso_now(), program_week))
+                weeks = total_weeks(session["program_days"])
+                threading.Thread(target=run_plan_job, args=(job_id, session["user_id"], session["email"], session["name"], profile, program_week, weeks), daemon=True, name=f"plan-{job_id[:8]}").start()
                 self.json_response(202, {"ok": True, "job_id": job_id, "status": "pending"})
+                return
+
+            if path == "/api/program/next-week":
+                session = self.require_session(csrf=True)
+                if not session:
+                    return
+                if not rate_allowed(f"next-week:{session['user_id']}", 2, 86400):
+                    self.json_response(429, {"error": "Du kan højst starte næste uge to gange i døgnet."})
+                    return
+                data = self.read_json(max_bytes=20_000)
+                with db() as conn:
+                    latest = latest_plan(conn, session["user_id"])
+                    profile_row = conn.execute("SELECT data_json FROM profiles WHERE user_id=?", (session["user_id"],)).fetchone()
+                if not latest or not profile_row:
+                    self.json_response(404, {"error": "Lav din første ugeplan først."})
+                    return
+                current_week = int(latest["program_week"])
+                weeks = total_weeks(session["program_days"])
+                if current_week >= weeks:
+                    self.json_response(409, {"error": "Du har nået sidste uge i dit valgte forløb. Du kan stadig opdatere din profil og fortsætte gratis."})
+                    return
+                energy = int(data.get("energy", 3))
+                difficulty = int(data.get("difficulty", 3))
+                pain = int(data.get("pain", 0))
+                if energy not in range(1, 6) or difficulty not in range(1, 6) or pain not in range(0, 6):
+                    raise ValueError("Vælg værdierne på skalaerne.")
+                if pain == 5:
+                    self.json_response(422, {"error": "Ved stærke eller vedvarende smerter skal træningen sættes på pause og vurderes af en fagperson.", "safety_block": True})
+                    return
+                weight = data.get("weight")
+                if weight not in (None, ""):
+                    weight = round(float(weight), 1)
+                    if not 40 <= weight <= 300:
+                        raise ValueError("Ugyldig vægt.")
+                clean_text = lambda key: re.sub(r"\s+", " ", str(data.get(key, "")).strip())[:500]
+                win, challenge, next_focus = clean_text("win"), clean_text("challenge"), clean_text("nextFocus")
+                if not win or not challenge:
+                    raise ValueError("Skriv kort, hvad der virkede, og hvad der var svært.")
+                review_text = f"energi {energy}/5, sværhedsgrad {difficulty}/5, smerte {pain}/5; virkede: {win}; svært: {challenge}; ønsket fokus: {next_focus or 'fortsæt roligt'}"
+                next_week = current_week + 1
+                job_id = secrets.token_urlsafe(18)
+                with db() as conn:
+                    existing_job = conn.execute("SELECT id FROM plan_jobs WHERE user_id=? AND program_week=? AND status IN ('pending','running') LIMIT 1", (session["user_id"], next_week)).fetchone()
+                    if existing_job:
+                        self.json_response(409, {"error": "Næste uge er allerede ved at blive lavet. Vent på mailen."})
+                        return
+                    conn.execute(
+                        """INSERT INTO weekly_reviews(user_id,program_week,weight,energy,difficulty,pain,win_text,challenge_text,next_focus,created_at)
+                           VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,program_week) DO UPDATE SET
+                           weight=excluded.weight,energy=excluded.energy,difficulty=excluded.difficulty,pain=excluded.pain,
+                           win_text=excluded.win_text,challenge_text=excluded.challenge_text,next_focus=excluded.next_focus,created_at=excluded.created_at""",
+                        (session["user_id"], current_week, weight, energy, difficulty, pain, win, challenge, next_focus, iso_now()),
+                    )
+                    conn.execute("INSERT INTO plan_jobs(id,user_id,status,created_at,updated_at,program_week) VALUES(?,?,?,?,?,?)", (job_id, session["user_id"], "pending", iso_now(), iso_now(), next_week))
+                profile = json.loads(profile_row["data_json"])
+                threading.Thread(target=run_plan_job, args=(job_id, session["user_id"], session["email"], session["name"], profile, next_week, weeks, review_text), daemon=True, name=f"week-{job_id[:8]}").start()
+                self.json_response(202, {"ok": True, "job_id": job_id, "status": "pending", "program_week": next_week})
+                return
+
+            if path == "/api/meal/swap":
+                session = self.require_session(csrf=True)
+                if not session:
+                    return
+                if not rate_allowed(f"meal-swap:{session['user_id']}", 20, 86400):
+                    self.json_response(429, {"error": "Grænsen for måltidsbytter i dag er nået."})
+                    return
+                data = self.read_json()
+                day_number = int(data.get("day", 0))
+                kind = str(data.get("kind", ""))
+                if day_number not in range(1, 8) or kind not in {"breakfast", "lunch", "dinner", "snack"}:
+                    raise ValueError("Ugyldigt måltid.")
+                with db() as conn:
+                    latest = latest_plan(conn, session["user_id"])
+                    profile_row = conn.execute("SELECT data_json FROM profiles WHERE user_id=?", (session["user_id"],)).fetchone()
+                if not latest or not profile_row:
+                    self.json_response(404, {"error": "Planen blev ikke fundet."})
+                    return
+                profile = json.loads(profile_row["data_json"])
+                plan = latest["plan"]
+                meal = plan["days"][day_number - 1]["meals"][kind]
+                options = meal_options(kind, profile)
+                replacement = next((item for item in options if item["title"] != meal.get("title")), None)
+                if replacement:
+                    replacement.pop("diets", None)
+                else:
+                    replacement = safe_meal(kind, profile, meal.get("title", ""))
+                plan["days"][day_number - 1]["meals"][kind] = replacement
+                additions = plan.setdefault("shoppingList", {}).setdefault("andet", [])
+                for ingredient in replacement.get("ingredients", []):
+                    if ingredient not in additions:
+                        additions.append(ingredient)
+                with db() as conn:
+                    conn.execute("UPDATE plans SET plan_json=? WHERE id=? AND user_id=?", (json.dumps(plan, ensure_ascii=False), latest["id"], session["user_id"]))
+                self.json_response(200, {"ok": True, "meal": replacement, "plan": plan})
+                return
+
+            if path == "/api/coach":
+                session = self.require_session(csrf=True)
+                if not session:
+                    return
+                if not rate_allowed(f"coach:{session['user_id']}", 12, 86400):
+                    self.json_response(429, {"error": "Du har brugt dagens 12 coach-svar. Prøv igen i morgen."})
+                    return
+                question = re.sub(r"\s+", " ", str(self.read_json(max_bytes=8_000).get("question", "")).strip())[:800]
+                if len(question) < 3:
+                    raise ValueError("Skriv et spørgsmål til coachen.")
+                with db() as conn:
+                    profile_row = conn.execute("SELECT data_json FROM profiles WHERE user_id=?", (session["user_id"],)).fetchone()
+                    latest = latest_plan(conn, session["user_id"])
+                if not profile_row or not latest:
+                    self.json_response(404, {"error": "Lav først en plan."})
+                    return
+                answer = coach_answer(question, json.loads(profile_row["data_json"]), latest["plan"])
+                with db() as conn:
+                    conn.execute("INSERT INTO coach_messages(user_id,role,content,created_at) VALUES(?,?,?,?)", (session["user_id"], "user", question, iso_now()))
+                    conn.execute("INSERT INTO coach_messages(user_id,role,content,created_at) VALUES(?,?,?,?)", (session["user_id"], "assistant", answer, iso_now()))
+                    conn.execute("DELETE FROM coach_messages WHERE user_id=? AND id NOT IN (SELECT id FROM coach_messages WHERE user_id=? ORDER BY id DESC LIMIT 100)", (session["user_id"], session["user_id"]))
+                self.json_response(200, {"ok": True, "answer": answer, "createdAt": iso_now()})
                 return
 
             if path == "/api/plan/email":

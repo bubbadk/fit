@@ -1,7 +1,7 @@
 {
   "enabled": true,
   "title": "Fri Form",
-  "description": "En helt gratis, ikke-dømmende ugeplan med almindelig mad, gåture, hjemmetræning og svømning.",
+  "description": "Et helt gratis, ikke-dømmende flerugersforløb med opskrifter, gåture, svømning, videoguider, styrketræning og AI-coach.",
   "url": "https://fit.dybbol.com/",
   "tags": ["Sundhed", "Vægttab", "Web"],
   "login_required": false
