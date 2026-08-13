@@ -2281,14 +2281,19 @@ const exerciseVideos: Record<string, ExerciseVideo> = {
 function videoForExercise(exercise: string) {
   const name = exercise.toLowerCase();
   if (name.includes("plank")) return exerciseVideos.plank;
-  if (name.includes("væg") || name.includes("push") || name.includes("armbøj"))
-    return exerciseVideos.wall;
   if (
     name.includes("elastik") ||
     name.includes("row") ||
     name.includes("roning")
   )
     return exerciseVideos.band;
+  if (
+    name.includes("push") ||
+    name.includes("armbøj") ||
+    name.includes("mod væg") ||
+    name.includes("væg-")
+  )
+    return exerciseVideos.wall;
   if (
     name.includes("squat") ||
     name.includes("knæbøj") ||
