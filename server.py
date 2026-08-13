@@ -485,6 +485,31 @@ def extract_json(text: str, profile: dict[str, Any]) -> dict[str, Any]:
         parsed["swimGuide"] = defaults["swimGuide"]
     if not isinstance(parsed["shoppingList"], dict) or not parsed["shoppingList"]:
         parsed["shoppingList"] = defaults["shoppingList"]
+    # AI providers occasionally return a valid seven-day shell with one meal
+    # or movement field missing.  Fill those holes deterministically before
+    # the plan reaches either the UI or the email renderer.
+    meal_kinds = ("breakfast", "lunch", "dinner", "snack")
+    for index, day in enumerate(parsed["days"]):
+        default_day = defaults["days"][index]
+        for field in ("day", "name", "focus", "habit", "encouragement"):
+            if day.get(field) in (None, ""):
+                day[field] = default_day[field]
+        meals = day.setdefault("meals", {})
+        for kind in meal_kinds:
+            candidate = meals.get(kind)
+            if not isinstance(candidate, dict):
+                candidate = {}
+            merged_meal = dict(default_day["meals"][kind])
+            merged_meal.update({key: value for key, value in candidate.items() if value not in (None, "", [])})
+            meals[kind] = merged_meal
+        movement = day.get("movement")
+        if not isinstance(movement, dict):
+            movement = {}
+        merged_movement = dict(default_day["movement"])
+        merged_movement.update({key: value for key, value in movement.items() if value not in (None, "", [])})
+        if not isinstance(merged_movement.get("instructions"), list):
+            merged_movement["instructions"] = default_day["movement"]["instructions"]
+        day["movement"] = merged_movement
     movement_text = lambda day: f"{day.get('movement', {}).get('type', '')} {day.get('movement', {}).get('title', '')}".lower()
     if profile["walk"] and not any("gå" in movement_text(day) for day in parsed["days"]):
         parsed["days"][0]["movement"] = defaults["days"][0]["movement"]
@@ -982,14 +1007,14 @@ class AppHandler(BaseHTTPRequestHandler):
             with db() as conn:
                 profile_row = conn.execute("SELECT data_json FROM profiles WHERE user_id=?", (session["user_id"],)).fetchone()
                 plan = latest_plan(conn, session["user_id"])
-                if plan and profile_row and (
-                    not plan["plan"].get("program")
-                    or not plan["plan"].get("exerciseLibrary")
-                ):
+                if plan and profile_row:
                     stored_profile = json.loads(profile_row["data_json"])
-                    upgraded = ensure_meal_safety(plan["plan"], stored_profile)
+                    original = json.dumps(plan["plan"], ensure_ascii=False, sort_keys=True)
+                    upgraded = extract_json(json.dumps(plan["plan"], ensure_ascii=False), stored_profile)
+                    upgraded = ensure_meal_safety(upgraded, stored_profile)
                     upgraded = apply_program_structure(upgraded, stored_profile, int(plan["program_week"] or 1), total_weeks(session["program_days"]))
-                    conn.execute("UPDATE plans SET plan_json=? WHERE id=? AND user_id=?", (json.dumps(upgraded, ensure_ascii=False), plan["id"], session["user_id"]))
+                    if json.dumps(upgraded, ensure_ascii=False, sort_keys=True) != original:
+                        conn.execute("UPDATE plans SET plan_json=? WHERE id=? AND user_id=?", (json.dumps(upgraded, ensure_ascii=False), plan["id"], session["user_id"]))
                     plan["plan"] = upgraded
                 checkins = [dict(row) for row in conn.execute("SELECT day,item_id,completed,weight,mood,updated_at FROM checkins WHERE user_id=? ORDER BY day", (session["user_id"],))]
                 reviews = [dict(row) for row in conn.execute("SELECT program_week,weight,energy,difficulty,pain,win_text,challenge_text,next_focus,created_at FROM weekly_reviews WHERE user_id=? ORDER BY program_week", (session["user_id"],))]

@@ -1,4 +1,5 @@
 import unittest
+import json
 from pathlib import Path
 
 from program_content import (
@@ -8,6 +9,7 @@ from program_content import (
     ensure_meal_safety,
     total_weeks,
 )
+import server
 
 
 class ProgramContentTests(unittest.TestCase):
@@ -53,6 +55,15 @@ class ProgramContentTests(unittest.TestCase):
         text = str(safe["days"][0]["meals"]["breakfast"]).lower()
         for word in ("havregryn", "mælk", "skyr", "rugbrød"):
             self.assertNotIn(word, text)
+
+    def test_partial_ai_days_are_completed_before_email(self):
+        partial = server.fallback_plan(self.profile)
+        del partial["days"][0]["meals"]["breakfast"]
+        partial["days"][1]["movement"] = {"type": "styrke"}
+        completed = server.extract_json(json.dumps(partial, ensure_ascii=False), self.profile)
+        self.assertTrue(completed["days"][0]["meals"]["breakfast"]["title"])
+        self.assertTrue(completed["days"][1]["movement"]["title"])
+        self.assertIsInstance(completed["days"][1]["movement"]["instructions"], list)
 
 
 if __name__ == "__main__":
