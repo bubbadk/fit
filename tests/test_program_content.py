@@ -78,6 +78,41 @@ class ProgramContentTests(unittest.TestCase):
         for word in ("havregryn", "mælk", "skyr", "rugbrød"):
             self.assertNotIn(word, text)
 
+    def test_thin_ai_recipe_is_replaced_with_real_instructions(self):
+        plan = {
+            "days": [{
+                "meals": {
+                    "dinner": {
+                        "title": "Bagt torsk med kartofler og remoulade-dressing",
+                        "ingredients": [
+                            "200 g torskefilet", "300 g kartofler",
+                            "150 g gulerødder og broccoli", "1 spsk let remoulade",
+                            "citronsaft og persille",
+                        ],
+                        "portion": "½ grønt, ¼ fisk, ¼ kartofler",
+                        "method": ["Tilbered råvarerne enkelt og brug portionsforslaget som pejlemærke."],
+                        "prepMinutes": 45,
+                    }
+                }
+            }]
+        }
+        upgraded = ensure_meal_safety(plan, self.profile)
+        recipe = upgraded["days"][0]["meals"]["dinner"]
+        self.assertGreaterEqual(len(recipe["method"]), 5)
+        joined = " ".join(recipe["method"])
+        self.assertIn("200 °C", joined)
+        self.assertIn("10-14 minutter", joined)
+        self.assertIn("60 °C", joined)
+        self.assertNotIn("Tilbered råvarerne enkelt", joined)
+
+    def test_catalogue_meals_have_quantities_and_full_methods(self):
+        for kind in ("breakfast", "lunch", "dinner", "snack"):
+            meal = server.safe_meal(kind, self.profile)
+            plan = {"days": [{"meals": {kind: meal}}]}
+            upgraded = ensure_meal_safety(plan, self.profile)["days"][0]["meals"][kind]
+            self.assertGreaterEqual(len(upgraded["method"]), 4)
+            self.assertTrue(any(char.isdigit() for item in upgraded["ingredients"] for char in item))
+
     def test_partial_ai_days_are_completed_before_email(self):
         partial = server.fallback_plan(self.profile)
         del partial["days"][0]["meals"]["breakfast"]

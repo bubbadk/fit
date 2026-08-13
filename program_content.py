@@ -208,25 +208,25 @@ def _shape_movements(plan: dict[str, Any], profile: dict[str, Any], week: int, w
 
 MEAL_SWAPS = {
     "breakfast": [
-        {"title": "Havregrød med bær", "ingredients": ["havregryn", "mælk eller plantedrik", "bær", "skyr eller sojayoghurt"], "portion": "1 skål med en håndfuld bær", "method": ["Kog havregryn med væske.", "Top med bær og en skefuld skyr."], "prepMinutes": 8, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Rugbrød med æg og tomat", "ingredients": ["rugbrød", "æg", "tomat", "purløg"], "portion": "1-2 skiver efter sult", "method": ["Kog eller steg ægget.", "Servér på rugbrød med tomat."], "prepMinutes": 10, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Skyrskål med frugt og kerner", "ingredients": ["skyr eller sojayoghurt", "frugt", "græskarkerner", "havregryn"], "portion": "1 skål", "method": ["Skær frugten.", "Saml det hele i en skål."], "prepMinutes": 5, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Havregrød med bær", "ingredients": ["50 g havregryn", "1½ dl mælk eller plantedrik", "100 g bær", "100 g skyr eller sojayoghurt"], "portion": "1 skål med en håndfuld bær", "method": ["Kog havregryn med væske.", "Top med bær og en skefuld skyr."], "prepMinutes": 8, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Rugbrød med æg og tomat", "ingredients": ["2 skiver rugbrød", "2 æg", "1 tomat", "1 spsk hakket purløg"], "portion": "1-2 skiver efter sult", "method": ["Kog eller steg ægget.", "Servér på rugbrød med tomat."], "prepMinutes": 10, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Skyrskål med frugt og kerner", "ingredients": ["200 g skyr eller sojayoghurt", "1 stykke frugt", "1 spsk græskarkerner", "2 spsk havregryn"], "portion": "1 skål", "method": ["Skær frugten.", "Saml det hele i en skål."], "prepMinutes": 5, "diets": ["flex", "vegetarian", "pescetarian"]},
     ],
     "lunch": [
-        {"title": "Rugbrød med æg og sprødt grønt", "ingredients": ["rugbrød", "æg", "gulerod", "agurk"], "portion": "2 åbne madder og grønt ved siden af", "method": ["Læg æg på rugbrødet.", "Servér grøntsager ved siden af."], "prepMinutes": 8, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Bønnesalat med kartofler", "ingredients": ["kogte kartofler", "bønner", "kål", "tomat", "rapsolie", "citron"], "portion": "1 stor skål", "method": ["Skær kartofler og grønt.", "Vend med bønner, citron og lidt olie."], "prepMinutes": 12, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Tunsalat på rugbrød", "ingredients": ["tun", "skyr", "majs", "agurk", "rugbrød"], "portion": "2 åbne madder", "method": ["Rør tun med skyr og grønt.", "Fordel på rugbrød."], "prepMinutes": 8, "diets": ["flex", "pescetarian"]},
+        {"title": "Rugbrød med æg og sprødt grønt", "ingredients": ["2 skiver rugbrød", "2 æg", "1 gulerod", "½ agurk"], "portion": "2 åbne madder og grønt ved siden af", "method": ["Læg æg på rugbrødet.", "Servér grøntsager ved siden af."], "prepMinutes": 8, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Bønnesalat med kartofler", "ingredients": ["200 g kogte kartofler", "125 g drænede bønner", "100 g kål", "1 tomat", "1 tsk rapsolie", "½ citron"], "portion": "1 stor skål", "method": ["Skær kartofler og grønt.", "Vend med bønner, citron og lidt olie."], "prepMinutes": 12, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Tunsalat på rugbrød", "ingredients": ["1 lille dåse tun i vand", "2 spsk skyr", "3 spsk majs", "¼ agurk", "2 skiver rugbrød"], "portion": "2 åbne madder", "method": ["Rør tun med skyr og grønt.", "Fordel på rugbrød."], "prepMinutes": 8, "diets": ["flex", "pescetarian"]},
     ],
     "dinner": [
-        {"title": "Kylling, kartofler og ovngrønt", "ingredients": ["kylling", "kartofler", "broccoli", "gulerod", "rapsolie"], "portion": "½ grønt, ¼ kylling, ¼ kartofler", "method": ["Skær kartofler og grønt og vend med lidt olie.", "Bag sammen med kyllingen, til den er gennemstegt."], "prepMinutes": 35, "diets": ["flex"]},
-        {"title": "Lun linsesalat med fuldkornsris", "ingredients": ["linser", "fuldkornsris", "spidskål", "peberfrugt", "citron"], "portion": "½ grønt, ¼ linser, ¼ ris", "method": ["Kog risene.", "Vend med linser og snittet grønt."], "prepMinutes": 25, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Ovnbagt fisk med rodfrugter", "ingredients": ["fisk", "kartofler", "gulerod", "kål", "citron"], "portion": "½ grønt, ¼ fisk, ¼ kartofler", "method": ["Bag rodfrugterne næsten møre.", "Læg fisken ved de sidste 12-15 minutter."], "prepMinutes": 35, "diets": ["flex", "pescetarian"]},
-        {"title": "Bønnegryde med grøntsager", "ingredients": ["kidneybønner", "hakkede tomater", "gulerod", "peberfrugt", "fuldkornsris"], "portion": "En mellemstor skål med ekstra grønt", "method": ["Svits grøntsagerne kort.", "Tilsæt tomat og bønner og lad gryden simre."], "prepMinutes": 25, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Fuldkornspasta med linsebolognese", "ingredients": ["fuldkornspasta", "røde linser", "hakkede tomater", "gulerod", "løg"], "portion": "½ grøntsagssauce og ½ pasta", "method": ["Kog pastaen.", "Lad linser og grøntsager simre i tomatsaucen."], "prepMinutes": 30, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Kylling, kartofler og ovngrønt", "ingredients": ["150 g kyllingebryst", "250 g kartofler", "150 g broccoli", "1 gulerod", "1 tsk rapsolie"], "portion": "½ grønt, ¼ kylling, ¼ kartofler", "method": ["Skær kartofler og grønt og vend med lidt olie.", "Bag sammen med kyllingen, til den er gennemstegt."], "prepMinutes": 35, "diets": ["flex"]},
+        {"title": "Lun linsesalat med fuldkornsris", "ingredients": ["125 g kogte linser", "60 g fuldkornsris i tør vægt", "150 g spidskål", "½ peberfrugt", "½ citron"], "portion": "½ grønt, ¼ linser, ¼ ris", "method": ["Kog risene.", "Vend med linser og snittet grønt."], "prepMinutes": 25, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Ovnbagt fisk med rodfrugter", "ingredients": ["150 g fiskefilet", "200 g kartofler", "1 gulerod", "150 g kål", "½ citron"], "portion": "½ grønt, ¼ fisk, ¼ kartofler", "method": ["Bag rodfrugterne næsten møre.", "Læg fisken ved de sidste 12-15 minutter."], "prepMinutes": 35, "diets": ["flex", "pescetarian"]},
+        {"title": "Bønnegryde med grøntsager", "ingredients": ["150 g drænede kidneybønner", "200 g hakkede tomater", "1 gulerod", "½ peberfrugt", "60 g fuldkornsris i tør vægt"], "portion": "En mellemstor skål med ekstra grønt", "method": ["Svits grøntsagerne kort.", "Tilsæt tomat og bønner og lad gryden simre."], "prepMinutes": 25, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Fuldkornspasta med linsebolognese", "ingredients": ["75 g fuldkornspasta i tør vægt", "50 g røde linser", "200 g hakkede tomater", "1 gulerod", "½ løg"], "portion": "½ grøntsagssauce og ½ pasta", "method": ["Kog pastaen.", "Lad linser og grøntsager simre i tomatsaucen."], "prepMinutes": 30, "diets": ["flex", "vegetarian", "pescetarian"]},
     ],
     "snack": [
-        {"title": "Frugt og skyr", "ingredients": ["frugt", "skyr eller sojayoghurt"], "portion": "1 frugt og en lille skål", "method": ["Servér kun, hvis du er fysisk sulten."], "prepMinutes": 2, "diets": ["flex", "vegetarian", "pescetarian"]},
-        {"title": "Grøntsagsstænger med hummus", "ingredients": ["gulerod", "agurk", "hummus"], "portion": "1 håndfuld grønt og 2 spsk hummus", "method": ["Skær grøntsagerne og servér med hummus."], "prepMinutes": 5, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Frugt og skyr", "ingredients": ["1 stykke frugt", "100 g skyr eller sojayoghurt"], "portion": "1 frugt og en lille skål", "method": ["Servér kun, hvis du er fysisk sulten."], "prepMinutes": 2, "diets": ["flex", "vegetarian", "pescetarian"]},
+        {"title": "Grøntsagsstænger med hummus", "ingredients": ["1 gulerod", "½ agurk", "2 spsk hummus"], "portion": "1 håndfuld grønt og 2 spsk hummus", "method": ["Skær grøntsagerne og servér med hummus."], "prepMinutes": 5, "diets": ["flex", "vegetarian", "pescetarian"]},
     ],
 }
 
@@ -271,7 +271,80 @@ def safe_meal(kind: str, profile: dict[str, Any], avoid_title: str = "") -> dict
             meal.pop("diets", None)
             return meal
     # Conservative last resort when a free-text restriction removes the catalogue.
-    return {"title": "Dit kendte sikre måltid", "ingredients": ["Råvarer du ved, du tåler"], "portion": "Brug tallerkenmodellen og stop behageligt mæt", "method": ["Vælg et velkendt måltid, der passer til dine allergier og aftaler med din behandler."], "prepMinutes": 10}
+    return {"title": "Dit kendte sikre måltid", "ingredients": ["Råvarer du ved, du tåler"], "portion": "Brug tallerkenmodellen og stop behageligt mæt", "method": ["Vælg kun råvarer, du med sikkerhed ved, at du tåler.", "Vask hænder og arbejdsflade, og brug rene redskaber for at undgå spor af det, du ikke tåler.", "Tilbered måltidet på den måde, du plejer, og sørg for, at varm mad er gennemvarm.", "Anret efter tallerkenmodellen og følg altid din behandlers konkrete råd ved alvorlig allergi."], "prepMinutes": 10}
+
+
+def recipe_steps(meal: dict[str, Any], kind: str) -> list[str]:
+    """Build a usable recipe when an AI response only contains filler text."""
+    text = " ".join([
+        str(meal.get("title", "")),
+        *map(str, meal.get("ingredients", [])),
+    ]).lower()
+
+    if any(word in text for word in ("torsk", "fisk", "laks")):
+        return [
+            "Varm ovnen op til 200 °C almindelig ovn eller 180 °C varmluft. Sæt samtidig en gryde vand over til kartoflerne.",
+            "Skyl kartoflerne, skær store kartofler i halve og kog dem 15-18 minutter, til en lille kniv glider let igennem.",
+            "Dup fisken tør, læg den i et lille ovnfast fad og krydr med peber, citron og eventuelle krydderurter. Bag den 10-14 minutter afhængigt af tykkelsen.",
+            "Damp eller kog grøntsagerne 5-7 minutter, så de er varme, men stadig har lidt bid.",
+            "Tjek fisken: kødet skal være uigennemsigtigt og dele sig i flager. Ved brug af termometer skal centrum være over 60 °C i mindst 1 minut.",
+            "Rør dressingen sammen, smag til med citron og anret efter portionsforslaget med grønt, fisk og kartofler hver for sig.",
+        ]
+    if any(word in text for word in ("kylling", "kalkun")):
+        return [
+            "Varm ovnen op til 200 °C almindelig ovn eller 180 °C varmluft.",
+            "Skyl kartofler og grøntsager, skær dem i ens stykker og vend dem med olie og krydderier på en bageplade.",
+            "Læg kyllingen i et separat område af pladen, krydr den og vask hænder, kniv og skærebræt efter kontakt med det rå kød.",
+            "Bag retten 25-35 minutter. Vend grøntsagerne efter cirka 20 minutter, så de bliver jævnt møre.",
+            "Tjek det tykkeste stykke kylling: det skal være helt gennemstegt uden rosa kød; et termometer skal vise mindst 75 °C.",
+            "Lad kyllingen hvile 2 minutter og anret efter portionsforslaget.",
+        ]
+    if any(word in text for word in ("gryde", "bolognese", "kødsovs", "linse")):
+        return [
+            "Skyl og hak grøntsagerne i små, nogenlunde ens stykker. Skyl linser eller bønner i en sigte, hvis de er fra dåse.",
+            "Varm en gryde op med lidt olie og steg løg og de faste grøntsager 3-4 minutter, uden at de bliver mørke.",
+            "Tilsæt bælgfrugter eller kød samt tomat og krydderier. Lad retten småsimre 15-20 minutter; rør undervejs og tilsæt en smule vand, hvis den bliver tør.",
+            "Kog ris eller pasta efter pakkens tid, mens saucen simrer. Hæld vandet fra, når det stadig har lidt bid.",
+            "Sørg for, at retten er rygende varm og eventuelt kød er helt gennemstegt. Smag først derefter til med salt, peber og syre.",
+            "Anret efter portionsforslaget og gem eventuelle rester på køl, så snart de er dampet af.",
+        ]
+    if "havre" in text or "grød" in text:
+        return [
+            "Kom havregryn og mælk eller vand i en lille gryde, og rør det sammen, mens gryden stadig er kold.",
+            "Varm op ved middel varme og lad grøden småkoge 3-5 minutter under jævnlig omrøring.",
+            "Tag gryden af varmen, når grøden er cremet; tilsæt lidt mere væske, hvis den er blevet for fast.",
+            "Hæld grøden i en skål og top med skyr, bær eller frugt og de kerner, der står i ingredienslisten.",
+        ]
+    if any(word in text for word in ("rugbrød", "madder", "tunsalat", "æg")):
+        return [
+            "Skyl grøntsagerne og skær dem i skiver eller stave. Kog eventuelle æg 8-9 minutter og køl dem kort i koldt vand.",
+            "Rør tun, bønnepostej eller den valgte topping sammen med de ingredienser, der står i listen, og smag til med peber og citron.",
+            "Fordel toppingen på rugbrødet lige før servering, så brødet ikke bliver blødt.",
+            "Servér det resterende grønt ved siden af og brug portionsforslaget som samlet mængde.",
+        ]
+    if any(word in text for word in ("skyr", "yoghurt", "frugt", "hummus")) and kind in {"breakfast", "snack"}:
+        return [
+            "Skyl frugt eller grøntsager, og skær dem i mundrette stykker.",
+            "Mål skyr, yoghurt eller hummus op i en skål, så portionsstørrelsen er tydelig.",
+            "Tilsæt frugt, grønt og eventuelle kerner lige før servering, så de bevarer deres bid.",
+            "Pak delene hver for sig, hvis måltidet skal med på farten.",
+        ]
+
+    return [
+        "Find alle ingredienser frem, skyl grøntsagerne og skær råvarerne i ens stykker, så de bliver færdige samtidig.",
+        "Start den del, der tager længst tid, for eksempel kartofler, ris eller pasta, og følg tiden på emballagen.",
+        "Tilbered proteinkilden ved middel varme og vend eller rør undervejs, så den bliver jævnt tilberedt.",
+        "Tilbered grøntsagerne, til de er varme og møre med lidt bid; tilsæt en smule vand, hvis de sætter sig fast.",
+        "Sørg for, at varm mad er gennemvarm, smag til og anret efter portionsforslaget.",
+    ]
+
+
+def _recipe_is_too_thin(method: Any) -> bool:
+    if not isinstance(method, list):
+        return True
+    steps = [str(step).strip() for step in method if str(step).strip()]
+    filler = " ".join(steps).lower()
+    return len(steps) < 4 or len(filler) < 180 or "tilbered råvarerne enkelt" in filler
 
 
 def ensure_meal_safety(plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
@@ -280,6 +353,7 @@ def ensure_meal_safety(plan: dict[str, Any], profile: dict[str, Any]) -> dict[st
             if not isinstance(meal, dict) or meal_conflicts(meal, profile):
                 day["meals"][kind] = safe_meal(kind, profile)
             else:
-                meal.setdefault("method", ["Tilbered råvarerne enkelt og brug portionsforslaget som pejlemærke."])
+                if _recipe_is_too_thin(meal.get("method")):
+                    meal["method"] = recipe_steps(meal, kind)
                 meal.setdefault("prepMinutes", int(profile.get("cookingMinutes", 25)) if kind == "dinner" else 10)
     return plan

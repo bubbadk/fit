@@ -2321,8 +2321,16 @@ function FoodView({
                 </div>
                 {openMeal === key && (
                   <div className="meal-recipe">
-                    <b>Sådan gør du {meal.prepMinutes ? `· ca. ${meal.prepMinutes} min` : ""}</b>
-                    <ol>{(meal.method || ["Tilbered råvarerne enkelt og brug portionsforslaget som pejlemærke."]).map((step) => <li key={step}>{step}</li>)}</ol>
+                    {meal.ingredients && (
+                      <div className="recipe-ingredients">
+                        <b>Du skal bruge · 1 person</b>
+                        <ul>{meal.ingredients.map((ingredient) => <li key={ingredient}>{ingredient}</li>)}</ul>
+                      </div>
+                    )}
+                    <div className="recipe-method">
+                      <b>Sådan gør du {meal.prepMinutes ? `· ca. ${meal.prepMinutes} min` : ""}</b>
+                      <ol>{(meal.method || []).map((step) => <li key={step}>{step}</li>)}</ol>
+                    </div>
                   </div>
                 )}
               </div>
