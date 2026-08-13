@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type User = {
   name: string;
@@ -2167,10 +2167,14 @@ function TrainingView({ plan }: { plan: Plan }) {
         </div>
         <div className="exercise-list">
           {plan.strengthGuide.map((item, index) => (
-            <article key={item.exercise}>
-              <i>{index + 1}</i>
-              <div>
-                <ExerciseAnimation exercise={item.exercise} />
+            <article className="exercise-card" key={item.exercise}>
+              <i className="exercise-number">{index + 1}</i>
+              <ExerciseMedia
+                exercise={item.exercise}
+                how={item.how}
+                easier={item.easier}
+              />
+              <div className="exercise-copy">
                 <h3>{item.exercise}</h3>
                 <p>{item.how}</p>
                 <span>
@@ -2224,47 +2228,188 @@ function TrainingView({ plan }: { plan: Plan }) {
   );
 }
 
-function ExerciseAnimation({ exercise }: { exercise: string }) {
+type ExerciseVideo = {
+  src: string;
+  poster: string;
+  title: string;
+  credit: string;
+  source: string;
+};
+
+const exerciseVideos: Record<string, ExerciseVideo> = {
+  squat: {
+    src: "/exercises/chair-squat.mp4",
+    poster: "/exercises/chair-squat.webp",
+    title: "Kontrolleret squat med træner",
+    credit: "Anna Shvets · Pexels",
+    source:
+      "https://www.pexels.com/video/trainer-explaining-an-exercise-to-a-woman-4838146/",
+  },
+  wall: {
+    src: "/exercises/wall-pushup.mp4",
+    poster: "/exercises/wall-pushup.webp",
+    title: "Armbøjning mod væg",
+    credit: "Ketut Subiyanto · Pexels",
+    source:
+      "https://www.pexels.com/video/man-doing-a-wall-push-ups-on-the-outdoors-5034321/",
+  },
+  plank: {
+    src: "/exercises/plank.mp4",
+    poster: "/exercises/plank.webp",
+    title: "Planke med rolig kropslinje",
+    credit: "MART PRODUCTION · Pexels",
+    source: "https://www.pexels.com/video/a-woman-doing-a-plank-8836970/",
+  },
+  band: {
+    src: "/exercises/resistance-band.mp4",
+    poster: "/exercises/resistance-band.webp",
+    title: "Træk med elastik",
+    credit: "Pexels",
+    source:
+      "https://www.pexels.com/video/woman-exercising-using-exercise-band-4393123/",
+  },
+  chair: {
+    src: "/exercises/chair-mobility.mp4",
+    poster: "/exercises/chair-mobility.webp",
+    title: "Rolig bevægelse på stol",
+    credit: "Pressmaster · Pexels",
+    source:
+      "https://www.pexels.com/video/an-instructor-showing-elderly-some-exercise-steps-while-sitting-down-3196290/",
+  },
+};
+
+function videoForExercise(exercise: string) {
   const name = exercise.toLowerCase();
-  const kind =
-    name.includes("stol") || name.includes("sæt dig") || name.includes("rejs")
-      ? "chair"
-      : name.includes("væg") || name.includes("push")
-        ? "wall"
-        : name.includes("bro") || name.includes("hofte")
-          ? "bridge"
-          : name.includes("arm") || name.includes("skulder")
-            ? "arms"
-            : "stand";
-  const labels: Record<string, string> = {
-    chair: "Animation: Sæt dig kontrolleret på stolen og rejs dig igen",
-    wall: "Animation: Bøj armene mod væggen og pres roligt tilbage",
-    bridge: "Animation: Løft hoften roligt og sænk den igen",
-    arms: "Animation: Løft armene roligt og sænk dem igen",
-    stand: "Animation: Udfør bevægelsen langsomt og kontrolleret",
-  };
+  if (name.includes("plank")) return exerciseVideos.plank;
+  if (name.includes("væg") || name.includes("push") || name.includes("armbøj"))
+    return exerciseVideos.wall;
+  if (
+    name.includes("elastik") ||
+    name.includes("row") ||
+    name.includes("roning")
+  )
+    return exerciseVideos.band;
+  if (
+    name.includes("squat") ||
+    name.includes("knæbøj") ||
+    name.includes("sæt dig") ||
+    name.includes("rejs")
+  )
+    return exerciseVideos.squat;
+  if (name.includes("stol") || name.includes("siddende"))
+    return exerciseVideos.chair;
+  return null;
+}
+
+function ExerciseMedia({
+  exercise,
+  how,
+  easier,
+}: {
+  exercise: string;
+  how: string;
+  easier: string;
+}) {
+  const media = videoForExercise(exercise);
+  const preview = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(
+    () => !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!media || !preview.current) return;
+    if (playing) preview.current.play().catch(() => setPlaying(false));
+    else preview.current.pause();
+  }, [media, playing]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: KeyboardEvent) =>
+      event.key === "Escape" && setOpen(false);
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [open]);
+
+  if (!media) return null;
   return (
-    <div
-      className={`exercise-animation motion-${kind}`}
-      role="img"
-      aria-label={labels[kind]}
-    >
-      <div className="motion-floor" />
-      <div className="motion-chair">
-        <i />
-        <b />
+    <>
+      <div className="exercise-media">
+        <video
+          ref={preview}
+          src={media.src}
+          poster={media.poster}
+          muted
+          loop
+          playsInline
+          preload="metadata"
+          aria-label={`${media.title}. Lydløs videodemonstration.`}
+        />
+        <button
+          type="button"
+          className="video-open"
+          onClick={() => setOpen(true)}
+          aria-label={`Åbn video for ${exercise}`}
+        >
+          <i>▶</i> Se teknikken
+        </button>
+        <button
+          type="button"
+          className="video-pause"
+          onClick={() => setPlaying(!playing)}
+          aria-label={playing ? "Sæt animation på pause" : "Afspil animation"}
+        >
+          {playing ? "Ⅱ" : "▶"}
+        </button>
       </div>
-      <div className="motion-wall" />
-      <div className="motion-person">
-        <i className="head" />
-        <i className="body" />
-        <i className="arm one" />
-        <i className="arm two" />
-        <i className="leg one" />
-        <i className="leg two" />
-      </div>
-      <small>Se bevægelsen</small>
-    </div>
+      {open && (
+        <div
+          className="modal-backdrop exercise-video-backdrop"
+          role="presentation"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setOpen(false)
+          }
+        >
+          <section
+            className="exercise-video-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Videoguide til ${exercise}`}
+          >
+            <button
+              className="modal-close"
+              onClick={() => setOpen(false)}
+              aria-label="Luk video"
+            >
+              ×
+            </button>
+            <video
+              src={media.src}
+              poster={media.poster}
+              controls
+              autoPlay
+              muted
+              loop
+            />
+            <div>
+              <p className="eyebrow">SÅDAN SER BEVÆGELSEN UD</p>
+              <h2>{exercise}</h2>
+              <p>{how}</p>
+              <p className="video-easier">
+                <b>Lettere variant:</b> {easier}
+              </p>
+              <small>
+                Videoen er en generel demonstration. Følg altid din beskrevne
+                variant og stop ved smerte.
+              </small>
+              <a href={media.source} target="_blank" rel="noreferrer">
+                Video: {media.credit} ↗
+              </a>
+            </div>
+          </section>
+        </div>
+      )}
+    </>
   );
 }
 
