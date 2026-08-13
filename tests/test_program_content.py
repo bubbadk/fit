@@ -113,6 +113,28 @@ class ProgramContentTests(unittest.TestCase):
             self.assertGreaterEqual(len(upgraded["method"]), 4)
             self.assertTrue(any(char.isdigit() for item in upgraded["ingredients"] for char in item))
 
+    def test_recipe_repair_respects_the_dish_name(self):
+        cases = [
+            ("Kyllingewok med grønt og ris", "wok", "Varm ovnen op til 200 °C."),
+            ("Kyllingekarry med ris", "karry", "Varm ovnen op til 200 °C."),
+            ("Fisk, rugbrød og råkost", "rugbrød", "Varm ovnen op til 200 °C."),
+            ("Grøntsagssuppe med bønner", "suppe", "Tilbered råvarerne enkelt."),
+            ("Rester efter tallerkenmodellen", "rester", "Tilbered råvarerne enkelt."),
+        ]
+        for title, expected_word, wrong_step in cases:
+            plan = {"days": [{"meals": {"dinner": {
+                "title": title,
+                "ingredients": ["150 g protein", "200 g grøntsager", "60 g tilbehør"],
+                "portion": "½ grønt, ¼ protein, ¼ tilbehør",
+                "method": [wrong_step] * 4,
+                "prepMinutes": 30,
+            }}}]}
+            recipe = ensure_meal_safety(plan, self.profile)["days"][0]["meals"]["dinner"]
+            joined = " ".join(recipe["method"]).lower()
+            self.assertIn(expected_word, joined)
+            if expected_word in {"wok", "karry", "rugbrød"}:
+                self.assertNotIn("varm ovnen", joined)
+
     def test_partial_ai_days_are_completed_before_email(self):
         partial = server.fallback_plan(self.profile)
         del partial["days"][0]["meals"]["breakfast"]

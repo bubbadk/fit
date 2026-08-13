@@ -281,6 +281,48 @@ def recipe_steps(meal: dict[str, Any], kind: str) -> list[str]:
         *map(str, meal.get("ingredients", [])),
     ]).lower()
 
+    if "wok" in text:
+        return [
+            "Kog risene efter pakkens tid. Skær imens kylling og grøntsager i tynde, ens strimler, og hold rå kylling adskilt fra grøntsagerne.",
+            "Varm en stor pande eller wok godt op med halvdelen af olien. Steg kyllingen 5-6 minutter, til den har farve på alle sider.",
+            "Tag kyllingen kort af panden. Tilsæt resten af olien og steg de faste grøntsager 3 minutter; kom derefter broccoli eller andre bløde grøntsager på i 2-3 minutter.",
+            "Kom kyllingen tilbage sammen med sauce eller krydderier og 2-3 spsk vand. Vend retten ved høj varme i 2 minutter.",
+            "Skær i det tykkeste kyllingestykke: kødet skal være helt hvidt uden rosa områder; et termometer skal vise mindst 75 °C.",
+            "Smag til, fordel ris og wok på tallerkenen efter portionsforslaget og servér med det samme.",
+        ]
+    if "karry" in text:
+        return [
+            "Kog risene efter pakkens tid. Hak løg og skær kylling og grøntsager i mundrette stykker.",
+            "Varm olien i en gryde ved middel varme. Steg løg og karry 1 minut, til det dufter, uden at krydderiet bliver brændt.",
+            "Tilsæt kyllingen og brun den 4-5 minutter under omrøring. Vask hænder og redskaber efter kontakt med rå kylling.",
+            "Kom grøntsager og den angivne væske i gryden. Lad retten småsimre 10-12 minutter; rør et par gange undervejs.",
+            "Tjek det tykkeste kyllingestykke: det skal være helt gennemstegt uden rosa kød; et termometer skal vise mindst 75 °C.",
+            "Smag til, justér konsistensen med lidt vand og anret karryretten med ris og ekstra grønt.",
+        ]
+    if any(word in text for word in ("suppe", "suppe")):
+        return [
+            "Skyl grøntsagerne, skræl dem efter behov og skær dem i små, ens stykker. Skyl bønnerne i en sigte.",
+            "Varm lidt olie i en gryde og steg løg og de faste grøntsager 3-4 minutter ved middel varme.",
+            "Tilsæt bønner, den angivne væske og krydderier. Bring suppen i kog og skru derefter ned.",
+            "Lad suppen småsimre 15-20 minutter, til grøntsagerne er møre; rør et par gange og tilsæt vand, hvis den bliver for tyk.",
+            "Sørg for, at suppen er rygende varm, smag til og servér den portion, der står i planen.",
+        ]
+    if "rester" in text:
+        return [
+            "Tag kun de rester frem, der har været opbevaret på køl, og vælg grønt, protein og kartofler eller fuldkorn til én tallerken.",
+            "Skær større stykker i mindre dele, så maden varmes jævnt, og tilsæt 1-2 spsk vand til ris, pasta eller gryderet.",
+            "Varm resterne i gryde, pande eller mikroovn. Vend eller rør halvvejs, så der ikke er kolde områder.",
+            "Fortsæt, til hele den varme del er rygende og gennemvarm. Smag først til efter opvarmningen.",
+            "Supplér med frisk grønt, anret efter tallerkenmodellen og kassér rester, du er i tvivl om.",
+        ]
+    if "rugbrød" in text and any(word in text for word in ("torsk", "fisk", "laks")):
+        return [
+            "Skyl råkostgrøntsagerne, riv eller snit dem fint og vend dem med citron, peber og eventuel dressing.",
+            "Dup fisken tør, krydr den og varm en pande op med lidt olie ved middel varme.",
+            "Steg fisken 3-5 minutter på hver side afhængigt af tykkelsen. Vend den kun én gang, så den ikke går i stykker.",
+            "Tjek fisken: kødet skal være uigennemsigtigt og dele sig i flager. Ved brug af termometer skal centrum være over 60 °C i mindst 1 minut.",
+            "Læg fisken på rugbrødet eller servér delene hver for sig med råkosten ved siden af.",
+        ]
     if any(word in text for word in ("torsk", "fisk", "laks")):
         return [
             "Varm ovnen op til 200 °C almindelig ovn eller 180 °C varmluft. Sæt samtidig en gryde vand over til kartoflerne.",
@@ -339,12 +381,18 @@ def recipe_steps(meal: dict[str, Any], kind: str) -> list[str]:
     ]
 
 
-def _recipe_is_too_thin(method: Any) -> bool:
+def _recipe_is_too_thin(method: Any, meal: dict[str, Any]) -> bool:
     if not isinstance(method, list):
         return True
     steps = [str(step).strip() for step in method if str(step).strip()]
     filler = " ".join(steps).lower()
-    return len(steps) < 4 or len(filler) < 180 or "tilbered råvarerne enkelt" in filler
+    title = str(meal.get("title", "")).lower()
+    mismatched = (
+        ("wok" in title and "ovn" in filler)
+        or ("karry" in title and "ovn" in filler)
+        or ("rugbrød" in title and "fisk" in title and "ovn" in filler)
+    )
+    return len(steps) < 4 or len(filler) < 180 or "tilbered råvarerne enkelt" in filler or mismatched
 
 
 def ensure_meal_safety(plan: dict[str, Any], profile: dict[str, Any]) -> dict[str, Any]:
@@ -353,7 +401,7 @@ def ensure_meal_safety(plan: dict[str, Any], profile: dict[str, Any]) -> dict[st
             if not isinstance(meal, dict) or meal_conflicts(meal, profile):
                 day["meals"][kind] = safe_meal(kind, profile)
             else:
-                if _recipe_is_too_thin(meal.get("method")):
+                if _recipe_is_too_thin(meal.get("method"), meal):
                     meal["method"] = recipe_steps(meal, kind)
                 meal.setdefault("prepMinutes", int(profile.get("cookingMinutes", 25)) if kind == "dinner" else 10)
     return plan
