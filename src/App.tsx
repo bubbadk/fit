@@ -1,6 +1,13 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type User = { name: string; email: string; isAdmin?: boolean };
+type User = {
+  name: string;
+  email: string;
+  isAdmin?: boolean;
+  programDays?: number | null;
+  programStartedAt?: string | null;
+  programEndsAt?: string | null;
+};
 type Meal = { title: string; ingredients?: string[]; portion?: string };
 type PlanDay = {
   day: number;
@@ -229,7 +236,12 @@ export default function App() {
       profile={profile}
       checkins={checkins}
       setCheckins={setCheckins}
-      onNewPlan={() => setPlan(null)}
+      setProfile={setProfile}
+      onQueued={(email) => {
+        sessionStorage.setItem("friform-plan-queued", email);
+        setQueuedEmail(email);
+        setPlan(null);
+      }}
       onLogout={() => logout(csrf, setUser)}
     />
   );
@@ -489,6 +501,19 @@ function AuthModal({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [forgot, setForgot] = useState(false);
+  const [capacity, setCapacity] = useState<{
+    limit: number;
+    enrolled: number;
+    remaining: number;
+    full: boolean;
+  } | null>(null);
+  useEffect(() => {
+    if (mode === "register") {
+      api("/api/capacity")
+        .then(setCapacity)
+        .catch(() => setCapacity(null));
+    }
+  }, [mode]);
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
@@ -501,6 +526,7 @@ function AuthModal({
           name: form.get("name"),
           email: form.get("email"),
           password: form.get("password"),
+          programDays: form.get("programDays"),
         }),
       });
       await onAuth();
@@ -544,18 +570,49 @@ function AuthModal({
             ? "Ingen prøveperiode. Intet betalingskort. Bare din personlige plan."
             : "Din plan, dine flueben og din fremgang venter på dig."}
         </p>
+        {mode === "register" && capacity && (
+          <p className={`capacity-note ${capacity.full ? "full" : ""}`}>
+            <b>
+              {capacity.full
+                ? "Alle 20 testpladser er optaget"
+                : `${capacity.remaining} af 20 testpladser tilbage`}
+            </b>
+            <span>De to oprindelige konti tæller ikke med.</span>
+          </p>
+        )}
         <form onSubmit={submit}>
           {mode === "register" && (
-            <label>
-              Fornavn
-              <input
-                name="name"
-                autoComplete="name"
-                required
-                minLength={2}
-                placeholder="Dit navn"
-              />
-            </label>
+            <>
+              <label>
+                Fornavn
+                <input
+                  name="name"
+                  autoComplete="name"
+                  required
+                  minLength={2}
+                  placeholder="Dit navn"
+                />
+              </label>
+              <fieldset className="program-choice">
+                <legend>Hvor langt et gratis forløb vil du prøve?</legend>
+                {[
+                  ["7", "1 uge"],
+                  ["30", "1 måned"],
+                  ["90", "3 måneder"],
+                  ["180", "6 måneder"],
+                ].map(([value, label], index) => (
+                  <label key={value}>
+                    <input
+                      type="radio"
+                      name="programDays"
+                      value={value}
+                      defaultChecked={index === 1}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </fieldset>
+            </>
           )}
           <label>
             E-mail
@@ -585,7 +642,10 @@ function AuthModal({
               {error}
             </p>
           )}
-          <button className="primary full" disabled={busy}>
+          <button
+            className="primary full"
+            disabled={busy || (mode === "register" && capacity?.full)}
+          >
             {busy
               ? "Et øjeblik…"
               : mode === "register"
@@ -1380,7 +1440,8 @@ function Dashboard({
   profile,
   checkins,
   setCheckins,
-  onNewPlan,
+  setProfile,
+  onQueued,
   onLogout,
 }: {
   user: User;
@@ -1390,7 +1451,8 @@ function Dashboard({
   profile: Profile;
   checkins: Checkin[];
   setCheckins: (c: Checkin[]) => void;
-  onNewPlan: () => void;
+  setProfile: (profile: Profile) => void;
+  onQueued: (email: string) => void;
   onLogout: () => void;
 }) {
   const [tab, setTab] = useState<Tab>("today");
@@ -1398,6 +1460,7 @@ function Dashboard({
     sessionStorage.getItem("friform-email-warning") || "",
   );
   const [emailBusy, setEmailBusy] = useState(false);
+  const [updateOpen, setUpdateOpen] = useState(false);
   const index = (new Date().getDay() + 6) % 7;
   const day = plan.days[index] || plan.days[0];
   const key = todayKey();
@@ -1454,8 +1517,17 @@ function Dashboard({
         <div className="user-menu">
           <span>
             <b>{user.name}</b>
-            <small>{user.email}</small>
+            <small>
+              {user.email}
+              {user.programDays ? ` · ${programLabel(user.programDays)}` : ""}
+            </small>
           </span>
+          <button
+            className="secondary header-update"
+            onClick={() => setUpdateOpen(true)}
+          >
+            Opdater oplysninger
+          </button>
           <button className="link-button" onClick={onLogout}>
             Log ud
           </button>
@@ -1478,8 +1550,8 @@ function Dashboard({
             <b>Ugens fokus</b>
             <p>{plan.weeklyFocus}</p>
           </div>
-          <button className="new-plan" onClick={onNewPlan}>
-            ↻ Tilpas eller lav ny plan
+          <button className="new-plan" onClick={() => setUpdateOpen(true)}>
+            ↻ Opdater mine oplysninger
           </button>
         </aside>
         <section className="main-panel">
@@ -1527,7 +1599,222 @@ function Dashboard({
           </button>
         ))}
       </nav>
+      {updateOpen && (
+        <ProfileUpdateModal
+          profile={profile}
+          csrf={csrf}
+          email={user.email}
+          onClose={() => setUpdateOpen(false)}
+          onQueued={(next) => {
+            setProfile(next);
+            setUpdateOpen(false);
+            onQueued(user.email);
+          }}
+        />
+      )}
     </main>
+  );
+}
+
+function programLabel(days: number) {
+  return days === 7
+    ? "1 uge"
+    : days === 30
+      ? "1 måned"
+      : days === 90
+        ? "3 måneder"
+        : days === 180
+          ? "6 måneder"
+          : `${days} dage`;
+}
+
+function ProfileUpdateModal({
+  profile,
+  csrf,
+  email,
+  onClose,
+  onQueued,
+}: {
+  profile: Profile;
+  csrf: string;
+  email: string;
+  onClose: () => void;
+  onQueued: (profile: Profile) => void;
+}) {
+  const [draft, setDraft] = useState(profile);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const update = <K extends keyof Profile>(key: K, value: Profile[K]) =>
+    setDraft({ ...draft, [key]: value });
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    setBusy(true);
+    setError("");
+    try {
+      const result = await api(
+        "/api/plan/generate",
+        { method: "POST", body: JSON.stringify({ profile: draft }) },
+        csrf,
+      );
+      if (!result.job_id)
+        throw new Error("Den opdaterede plan kunne ikke startes.");
+      onQueued(draft);
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Oplysningerne kunne ikke opdateres.",
+      );
+      setBusy(false);
+    }
+  };
+  return (
+    <div
+      className="modal-backdrop update-backdrop"
+      role="presentation"
+      onMouseDown={(event) =>
+        event.target === event.currentTarget && !busy && onClose()
+      }
+    >
+      <section
+        className="profile-update-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="update-title"
+      >
+        <button
+          className="modal-close"
+          onClick={onClose}
+          aria-label="Luk"
+          disabled={busy}
+        >
+          ×
+        </button>
+        <Brand />
+        <p className="eyebrow">OPDATER DIN RETNING</p>
+        <h2 id="update-title">Hvad har ændret sig?</h2>
+        <p>
+          Ret de oplysninger, der ikke længere passer. Vi laver derefter en
+          frisk plan og sender den til {email}.
+        </p>
+        <form onSubmit={submit}>
+          <div className="update-grid">
+            <NumberField
+              label="Vægt nu"
+              value={draft.weight}
+              min={40}
+              max={300}
+              unit="kg"
+              onChange={(v) => update("weight", v)}
+            />
+            <NumberField
+              label="Første målvægt"
+              value={draft.targetWeight}
+              min={40}
+              max={280}
+              unit="kg"
+              onChange={(v) => update("targetWeight", v)}
+            />
+            <NumberField
+              label="Tid pr. træningsdag"
+              value={draft.minutes}
+              min={10}
+              max={90}
+              unit="min"
+              onChange={(v) => update("minutes", v)}
+            />
+            <NumberField
+              label="Tid til aftensmad"
+              value={draft.cookingMinutes}
+              min={10}
+              max={90}
+              unit="min"
+              onChange={(v) => update("cookingMinutes", v)}
+            />
+          </div>
+          <Choice
+            label="Kostretning"
+            value={draft.diet}
+            onChange={(v) => update("diet", v as Profile["diet"])}
+            options={[
+              ["flex", "Fleksibelt"],
+              ["vegetarian", "Vegetarisk"],
+              ["pescetarian", "Vegetarisk + fisk"],
+            ]}
+          />
+          <div className="update-activities">
+            <Toggle
+              icon="🚶"
+              title="Gåture"
+              text="Korte eller længere ture"
+              checked={draft.walk}
+              onChange={(v) => update("walk", v)}
+            />
+            <Toggle
+              icon="🏊"
+              title="Svømning"
+              text="Baner og pauser"
+              checked={draft.swim}
+              onChange={(v) => update("swim", v)}
+            />
+            <Toggle
+              icon="💪"
+              title="Styrke"
+              text="Hjemme eller center"
+              checked={draft.strength}
+              onChange={(v) => update("strength", v)}
+            />
+          </div>
+          <div className="update-grid text-update-grid">
+            <label className="text-field">
+              Allergier
+              <input
+                value={draft.allergies}
+                onChange={(e) => update("allergies", e.target.value)}
+              />
+            </label>
+            <label className="text-field">
+              Mad du ikke bryder dig om
+              <input
+                value={draft.dislikes}
+                onChange={(e) => update("dislikes", e.target.value)}
+              />
+            </label>
+          </div>
+          <label className="consent compact-consent">
+            <input
+              type="checkbox"
+              checked={draft.consent}
+              onChange={(e) => update("consent", e.target.checked)}
+            />
+            <span>
+              <b>
+                Jeg accepterer, at den opdaterede profil bruges til en ny
+                AI-plan.
+              </b>
+            </span>
+          </label>
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <div className="update-actions">
+            <button
+              type="button"
+              className="secondary"
+              onClick={onClose}
+              disabled={busy}
+            >
+              Annuller
+            </button>
+            <button className="primary" disabled={busy || !draft.consent}>
+              {busy ? "Starter…" : "Opdater og send ny plan →"}
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
   );
 }
 
@@ -1883,6 +2170,7 @@ function TrainingView({ plan }: { plan: Plan }) {
             <article key={item.exercise}>
               <i>{index + 1}</i>
               <div>
+                <ExerciseAnimation exercise={item.exercise} />
                 <h3>{item.exercise}</h3>
                 <p>{item.how}</p>
                 <span>
@@ -1933,6 +2221,50 @@ function TrainingView({ plan }: { plan: Plan }) {
         </div>
       </section>
     </>
+  );
+}
+
+function ExerciseAnimation({ exercise }: { exercise: string }) {
+  const name = exercise.toLowerCase();
+  const kind =
+    name.includes("stol") || name.includes("sæt dig") || name.includes("rejs")
+      ? "chair"
+      : name.includes("væg") || name.includes("push")
+        ? "wall"
+        : name.includes("bro") || name.includes("hofte")
+          ? "bridge"
+          : name.includes("arm") || name.includes("skulder")
+            ? "arms"
+            : "stand";
+  const labels: Record<string, string> = {
+    chair: "Animation: Sæt dig kontrolleret på stolen og rejs dig igen",
+    wall: "Animation: Bøj armene mod væggen og pres roligt tilbage",
+    bridge: "Animation: Løft hoften roligt og sænk den igen",
+    arms: "Animation: Løft armene roligt og sænk dem igen",
+    stand: "Animation: Udfør bevægelsen langsomt og kontrolleret",
+  };
+  return (
+    <div
+      className={`exercise-animation motion-${kind}`}
+      role="img"
+      aria-label={labels[kind]}
+    >
+      <div className="motion-floor" />
+      <div className="motion-chair">
+        <i />
+        <b />
+      </div>
+      <div className="motion-wall" />
+      <div className="motion-person">
+        <i className="head" />
+        <i className="body" />
+        <i className="arm one" />
+        <i className="arm two" />
+        <i className="leg one" />
+        <i className="leg two" />
+      </div>
+      <small>Se bevægelsen</small>
+    </div>
   );
 }
 
@@ -2121,6 +2453,9 @@ type AdminData = {
     emailsSent: number;
     completedSteps: number;
     failedJobs: number;
+    enrollmentLimit: number;
+    enrolledNew: number;
+    enrollmentRemaining: number;
   };
   recentUsers: {
     email: string;
@@ -2129,6 +2464,8 @@ type AdminData = {
     last_login_at: string | null;
     plans: number;
     checkins: number;
+    program_days: number | null;
+    program_ends_at: string | null;
   }[];
   aiUsage: {
     configured: boolean;
@@ -2205,6 +2542,11 @@ function AdminView() {
       </div>
     );
   const cards = [
+    [
+      "Testdeltagere",
+      `${data.counts.enrolledNew}/${data.counts.enrollmentLimit}`,
+      `${data.counts.enrollmentRemaining} pladser tilbage`,
+    ],
     ["Brugere", data.counts.users, "Alle konti"],
     [
       "Nye i dag",
@@ -2261,6 +2603,7 @@ function AdminView() {
                 <th>Oprettet</th>
                 <th>Seneste login</th>
                 <th>Planer</th>
+                <th>Forløb</th>
                 <th>Skridt</th>
               </tr>
             </thead>
@@ -2278,6 +2621,11 @@ function AdminView() {
                       : "—"}
                   </td>
                   <td>{item.plans}</td>
+                  <td>
+                    {item.program_days
+                      ? programLabel(item.program_days)
+                      : "Eksisterende"}
+                  </td>
                   <td>{item.checkins}</td>
                 </tr>
               ))}

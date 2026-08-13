@@ -50,6 +50,8 @@ load_env(ROOT / ".env")
 PORT = int(os.getenv("PORT", "8963"))
 DB_PATH = Path(os.getenv("FRIFORM_DB_PATH", str(ROOT / "data" / "friform.db")))
 ADMIN_EMAIL = os.getenv("ADMIN_EMAIL", "reinodybbol@gmail.com").strip().lower()
+EXEMPT_EXISTING_USERS = int(os.getenv("EXEMPT_EXISTING_USERS", "2"))
+NEW_REGISTRATION_LIMIT = int(os.getenv("NEW_REGISTRATION_LIMIT", "20"))
 SESSION_DAYS = 30
 COOKIE_NAME = "friform_session"
 ALLOWED_ORIGINS = {
@@ -59,6 +61,10 @@ ALLOWED_ORIGINS = {
 }
 RATE_LOCK = threading.Lock()
 RATE_BUCKETS: dict[str, list[float]] = {}
+
+
+class RegistrationFullError(Exception):
+    pass
 
 
 def utc_now() -> datetime:
@@ -88,7 +94,10 @@ def init_db() -> None:
               name TEXT NOT NULL,
               password_hash TEXT NOT NULL,
               created_at TEXT NOT NULL,
-              last_login_at TEXT
+              last_login_at TEXT,
+              program_days INTEGER,
+              program_started_at TEXT,
+              program_ends_at TEXT
             );
             CREATE TABLE IF NOT EXISTS sessions (
               token_hash TEXT PRIMARY KEY,
@@ -167,6 +176,13 @@ def init_db() -> None:
         conn.execute("UPDATE plan_jobs SET status='failed',error='Serveren blev genstartet. Lav planen igen.',updated_at=? WHERE status IN ('pending','running')", (iso_now(),))
         conn.execute("DELETE FROM password_reset_tokens WHERE expires_at<?", (iso_now(),))
         conn.execute("UPDATE ai_usage_events SET status='interrupted',finished_at=? WHERE status='running'", (iso_now(),))
+        user_columns = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "program_days" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN program_days INTEGER")
+        if "program_started_at" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN program_started_at TEXT")
+        if "program_ends_at" not in user_columns:
+            conn.execute("ALTER TABLE users ADD COLUMN program_ends_at TEXT")
 
 
 def b64hex(data: bytes) -> str:
@@ -209,6 +225,27 @@ def validate_password(value: Any) -> str:
     if len(password) < 10 or len(password) > 200:
         raise ValueError("Adgangskoden skal være mindst 10 tegn.")
     return password
+
+
+def validate_program_days(value: Any) -> int:
+    try:
+        days = int(value)
+    except (TypeError, ValueError):
+        raise ValueError("Vælg hvor længe dit gratis forløb skal vare.")
+    if days not in {7, 30, 90, 180}:
+        raise ValueError("Vælg 1 uge, 1, 3 eller 6 måneder.")
+    return days
+
+
+def user_payload(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "email": row["email"],
+        "name": row["name"],
+        "isAdmin": row["email"].lower() == ADMIN_EMAIL,
+        "programDays": row["program_days"],
+        "programStartedAt": row["program_started_at"],
+        "programEndsAt": row["program_ends_at"],
+    }
 
 
 def rate_allowed(key: str, limit: int, window_seconds: int) -> bool:
@@ -780,7 +817,9 @@ class AppHandler(BaseHTTPRequestHandler):
         token_hash = hashlib.sha256(morsel.value.encode()).hexdigest()
         with db() as conn:
             row = conn.execute(
-                "SELECT s.token_hash,s.user_id,s.csrf_token,s.expires_at,u.email,u.name FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?",
+                """SELECT s.token_hash,s.user_id,s.csrf_token,s.expires_at,u.email,u.name,
+                   u.program_days,u.program_started_at,u.program_ends_at
+                   FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=?""",
                 (token_hash,),
             ).fetchone()
             if row and row["expires_at"] > iso_now():
@@ -813,6 +852,17 @@ class AppHandler(BaseHTTPRequestHandler):
             except sqlite3.Error:
                 self.json_response(503, {"status": "error"})
             return
+        if path == "/api/capacity":
+            with db() as conn:
+                total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+            enrolled = max(0, total - EXEMPT_EXISTING_USERS)
+            self.json_response(200, {
+                "limit": NEW_REGISTRATION_LIMIT,
+                "enrolled": min(enrolled, NEW_REGISTRATION_LIMIT),
+                "remaining": max(0, NEW_REGISTRATION_LIMIT - enrolled),
+                "full": enrolled >= NEW_REGISTRATION_LIMIT,
+            })
+            return
         if path == "/api/me":
             session = self.session()
             if not session:
@@ -824,7 +874,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 checkins = [dict(row) for row in conn.execute("SELECT day,item_id,completed,weight,mood,updated_at FROM checkins WHERE user_id=? ORDER BY day", (session["user_id"],))]
             self.json_response(200, {
                 "authenticated": True,
-                "user": {"email": session["email"], "name": session["name"], "isAdmin": session["email"].lower() == ADMIN_EMAIL},
+                "user": user_payload(session),
                 "csrf": session["csrf_token"],
                 "profile": json.loads(profile_row["data_json"]) if profile_row else None,
                 "latestPlan": plan,
@@ -854,8 +904,12 @@ class AppHandler(BaseHTTPRequestHandler):
                     "completedSteps": conn.execute("SELECT COUNT(*) FROM checkins WHERE completed=1").fetchone()[0],
                     "failedJobs": conn.execute("SELECT COUNT(*) FROM plan_jobs WHERE status='failed'").fetchone()[0],
                 }
+                enrolled = max(0, counts["users"] - EXEMPT_EXISTING_USERS)
+                counts["enrollmentLimit"] = NEW_REGISTRATION_LIMIT
+                counts["enrolledNew"] = min(enrolled, NEW_REGISTRATION_LIMIT)
+                counts["enrollmentRemaining"] = max(0, NEW_REGISTRATION_LIMIT - enrolled)
                 recent = [dict(row) for row in conn.execute(
-                    """SELECT u.email,u.name,u.created_at,u.last_login_at,
+                    """SELECT u.email,u.name,u.created_at,u.last_login_at,u.program_days,u.program_ends_at,
                        COUNT(DISTINCT p.id) AS plans,
                        COUNT(DISTINCT c.day || ':' || c.item_id) AS checkins
                        FROM users u
@@ -954,15 +1008,29 @@ class AppHandler(BaseHTTPRequestHandler):
                     return
                 data = self.read_json()
                 email, name, password = clean_email(data.get("email")), clean_name(data.get("name")), validate_password(data.get("password"))
+                program_days = validate_program_days(data.get("programDays"))
+                program_started = iso_now()
+                program_ends = (utc_now() + timedelta(days=program_days)).isoformat()
                 try:
                     with db() as conn:
-                        cursor = conn.execute("INSERT INTO users(email,name,password_hash,created_at) VALUES(?,?,?,?)", (email, name, password_hash(password), iso_now()))
+                        conn.execute("BEGIN IMMEDIATE")
+                        total = conn.execute("SELECT COUNT(*) FROM users").fetchone()[0]
+                        if total >= EXEMPT_EXISTING_USERS + NEW_REGISTRATION_LIMIT:
+                            raise RegistrationFullError()
+                        cursor = conn.execute(
+                            """INSERT INTO users(email,name,password_hash,created_at,program_days,program_started_at,program_ends_at)
+                               VALUES(?,?,?,?,?,?,?)""",
+                            (email, name, password_hash(password), iso_now(), program_days, program_started, program_ends),
+                        )
                         raw, csrf = make_session(conn, cursor.lastrowid)
+                except RegistrationFullError:
+                    self.json_response(409, {"error": "De 20 pladser er optaget. Tilmeldingen er midlertidigt lukket.", "capacity_full": True})
+                    return
                 except sqlite3.IntegrityError:
                     self.json_response(409, {"error": "Der findes allerede en konto med denne e-mail."})
                     return
                 cookie = f"{COOKIE_NAME}={raw}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax"
-                self.json_response(201, {"ok": True, "csrf": csrf, "user": {"email": email, "name": name, "isAdmin": email == ADMIN_EMAIL}}, {"Set-Cookie": cookie})
+                self.json_response(201, {"ok": True, "csrf": csrf, "user": {"email": email, "name": name, "isAdmin": email == ADMIN_EMAIL, "programDays": program_days, "programStartedAt": program_started, "programEndsAt": program_ends}}, {"Set-Cookie": cookie})
                 return
 
             if path == "/api/auth/login":
@@ -972,14 +1040,14 @@ class AppHandler(BaseHTTPRequestHandler):
                 data = self.read_json()
                 email, password = clean_email(data.get("email")), str(data.get("password", ""))
                 with db() as conn:
-                    user = conn.execute("SELECT id,email,name,password_hash FROM users WHERE email=?", (email,)).fetchone()
+                    user = conn.execute("SELECT id,email,name,password_hash,program_days,program_started_at,program_ends_at FROM users WHERE email=?", (email,)).fetchone()
                     if not user or not password_ok(password, user["password_hash"]):
                         self.json_response(401, {"error": "E-mail eller adgangskode er forkert."})
                         return
                     raw, csrf = make_session(conn, user["id"])
                     conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (iso_now(), user["id"]))
                 cookie = f"{COOKIE_NAME}={raw}; Path=/; Max-Age={SESSION_DAYS * 86400}; HttpOnly; Secure; SameSite=Lax"
-                self.json_response(200, {"ok": True, "csrf": csrf, "user": {"email": user["email"], "name": user["name"], "isAdmin": user["email"].lower() == ADMIN_EMAIL}}, {"Set-Cookie": cookie})
+                self.json_response(200, {"ok": True, "csrf": csrf, "user": user_payload(user)}, {"Set-Cookie": cookie})
                 return
 
             if path == "/api/auth/forgot-password":
